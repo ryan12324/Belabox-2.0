@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Belabox 2.0 — Streaming Studio</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <!-- ── Top Bar ─────────────────────────────────────────────────────────── -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <span class="logo">🎬 Belabox <span class="logo-version">2.0</span></span>
+    </div>
+    <div class="topbar-center">
+      <div class="stream-status" id="stream-status">
+        <span class="status-dot" id="status-dot"></span>
+        <span class="status-text" id="status-text">Offline</span>
+        <span class="status-timer" id="status-timer" style="display:none">00:00:00</span>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span class="conn-indicator" id="conn-indicator" title="Server connection">○</span>
+      <button class="btn btn-stream" id="btn-go-live" disabled>▶ Go Live</button>
+    </div>
+  </header>
+
+  <!-- ── Main Layout ─────────────────────────────────────────────────────── -->
+  <div class="workspace">
+
+    <!-- Left Sidebar: Sources & Layers -->
+    <aside class="sidebar sidebar-left">
+      <!-- Sources -->
+      <section class="panel">
+        <div class="panel-header">
+          <h3>Sources</h3>
+          <div class="panel-actions">
+            <button class="btn-icon" id="btn-add-source" title="Add source">＋</button>
+          </div>
+        </div>
+        <ul class="source-list" id="source-list">
+          <li class="source-empty">No sources added yet.<br>Click ＋ to add a source.</li>
+        </ul>
+      </section>
+
+      <!-- Layers / scene order -->
+      <section class="panel">
+        <div class="panel-header">
+          <h3>Layers</h3>
+          <div class="panel-actions">
+            <button class="btn-icon" id="btn-layer-up" title="Move up">↑</button>
+            <button class="btn-icon" id="btn-layer-down" title="Move down">↓</button>
+          </div>
+        </div>
+        <ul class="layer-list" id="layer-list">
+          <li class="source-empty">No layers.</li>
+        </ul>
+      </section>
+    </aside>
+
+    <!-- Center: Scene Canvas -->
+    <main class="scene-area">
+      <div class="canvas-wrapper" id="canvas-wrapper">
+        <canvas id="preview-canvas"></canvas>
+        <!-- Inline text editor (hidden until needed) -->
+        <textarea id="inline-text-editor" class="inline-editor" style="display:none"></textarea>
+      </div>
+      <!-- Canvas toolbar -->
+      <div class="canvas-toolbar">
+        <button class="btn-tool" id="tool-select" title="Select / Move" data-active="true">⬛ Select</button>
+        <span class="toolbar-sep">|</span>
+        <button class="btn-tool" id="btn-add-text" title="Add text overlay">T Text</button>
+        <button class="btn-tool" id="btn-add-image" title="Add image overlay">🖼 Image</button>
+        <span class="toolbar-sep">|</span>
+        <button class="btn-tool" id="btn-add-camera" title="Add webcam">📷 Camera</button>
+        <button class="btn-tool" id="btn-add-screen" title="Add screen capture">🖥 Screen</button>
+        <span class="toolbar-sep flex-spacer"></span>
+        <label class="label-sm">Output:</label>
+        <select class="select-sm" id="output-resolution">
+          <option value="1920x1080">1080p</option>
+          <option value="1280x720" selected>720p</option>
+          <option value="854x480">480p</option>
+        </select>
+        <select class="select-sm" id="output-fps">
+          <option value="60">60 fps</option>
+          <option value="30" selected>30 fps</option>
+          <option value="24">24 fps</option>
+        </select>
+      </div>
+    </main>
+
+    <!-- Right Sidebar: Properties -->
+    <aside class="sidebar sidebar-right">
+      <section class="panel" id="properties-panel">
+        <div class="panel-header">
+          <h3>Properties</h3>
+        </div>
+        <div class="properties-content" id="properties-content">
+          <p class="prop-empty">Select a layer to edit its properties.</p>
+        </div>
+      </section>
+
+      <!-- Stream Settings -->
+      <section class="panel">
+        <div class="panel-header">
+          <h3>Stream Settings</h3>
+        </div>
+        <div class="stream-settings">
+          <label class="prop-label">Protocol</label>
+          <select class="prop-input" id="stream-protocol">
+            <option value="rtmp">RTMP</option>
+            <option value="srt">SRT</option>
+          </select>
+
+          <label class="prop-label">Stream URL</label>
+          <input class="prop-input" type="text" id="stream-url"
+            placeholder="rtmp://live.twitch.tv/app" />
+
+          <label class="prop-label">Stream Key</label>
+          <input class="prop-input" type="password" id="stream-key"
+            placeholder="your-stream-key" />
+
+          <label class="prop-label">Video Bitrate (kbps)</label>
+          <input class="prop-input" type="number" id="stream-vbitrate"
+            value="3000" min="500" max="15000" step="500" />
+
+          <label class="prop-label">Audio Bitrate (kbps)</label>
+          <select class="prop-input" id="stream-abitrate">
+            <option value="128" selected>128</option>
+            <option value="192">192</option>
+            <option value="256">256</option>
+            <option value="320">320</option>
+          </select>
+
+          <div class="stream-stats" id="stream-stats" style="display:none">
+            <div class="stat-row"><span>Frame</span><span id="stat-frame">—</span></div>
+            <div class="stat-row"><span>FPS</span><span id="stat-fps">—</span></div>
+            <div class="stat-row"><span>Bitrate</span><span id="stat-bitrate">—</span></div>
+          </div>
+        </div>
+      </section>
+    </aside>
+  </div>
+
+  <!-- ── Modals ──────────────────────────────────────────────────────────── -->
+
+  <!-- Add Source Modal -->
+  <div class="modal-overlay" id="modal-add-source" style="display:none">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Add Source</h2>
+        <button class="modal-close" data-modal="modal-add-source">✕</button>
+      </div>
+      <div class="modal-body source-picker">
+        <button class="source-type-btn" data-type="camera">
+          <span class="source-icon">📷</span>
+          <span class="source-label">Camera / Webcam</span>
+          <span class="source-desc">Capture from a connected camera</span>
+        </button>
+        <button class="source-type-btn" data-type="screen">
+          <span class="source-icon">🖥</span>
+          <span class="source-label">Screen Capture</span>
+          <span class="source-desc">Capture your screen or an application window</span>
+        </button>
+        <button class="source-type-btn" data-type="text">
+          <span class="source-icon">T</span>
+          <span class="source-label">Text Overlay</span>
+          <span class="source-desc">Add scrolling or static text to the scene</span>
+        </button>
+        <button class="source-type-btn" data-type="image">
+          <span class="source-icon">🖼</span>
+          <span class="source-label">Image / Logo</span>
+          <span class="source-desc">Add an image or logo overlay</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Image Source Modal -->
+  <div class="modal-overlay" id="modal-add-image" style="display:none">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2>Add Image</h2>
+        <button class="modal-close" data-modal="modal-add-image">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="prop-label">Image URL</label>
+        <input class="prop-input" type="text" id="img-url-input" placeholder="https://example.com/logo.png" />
+        <div class="modal-divider">— or —</div>
+        <label class="prop-label">Upload File</label>
+        <input class="prop-input" type="file" id="img-file-input" accept="image/*" />
+        <div class="modal-actions">
+          <button class="btn btn-primary" id="btn-confirm-add-image">Add Image</button>
+          <button class="btn" data-modal="modal-add-image">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Notification toast -->
+  <div class="toast" id="toast" style="display:none"></div>
+
+  <!-- JS modules -->
+  <script src="js/scene-editor.js"></script>
+  <script src="js/sources.js"></script>
+  <script src="js/overlays.js"></script>
+  <script src="js/stream.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

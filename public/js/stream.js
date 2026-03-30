@@ -1,19 +1,18 @@
 /**
- * StreamController – manages WebSocket connection, MediaRecorder, and streaming
+ * StreamController – manages WebSocket connection and server-side streaming.
+ *
+ * All video capture and compositing runs on the server.
+ * The browser sends scene configuration via REST and receives real-time
+ * status/stats via WebSocket.
  */
 
 'use strict';
 
-/** How often (in ms) MediaRecorder emits a data chunk to the server */
-const RECORDER_CHUNK_INTERVAL_MS = 250;
-
 class StreamController {
-  constructor(sceneEditor, sourcesManager) {
+  constructor(sceneEditor) {
     this._editor = sceneEditor;
-    this._sources = sourcesManager;
 
     this._ws = null;
-    this._recorder = null;
     this._isLive = false;
 
     this._timerInterval = null;
@@ -28,7 +27,6 @@ class StreamController {
   _connect() {
     try {
       this._ws = new WebSocket(this._wsUrl);
-      this._ws.binaryType = 'arraybuffer';
 
       this._ws.onopen = () => {
         console.log('[WS] Connected to server');
@@ -49,7 +47,6 @@ class StreamController {
         this._setConnected(false);
         document.getElementById('btn-go-live').disabled = true;
         if (this._isLive) this._onStreamEnded(null);
-        // Reconnect after 3 s
         setTimeout(() => this._connect(), 3000);
       };
 
@@ -79,6 +76,18 @@ class StreamController {
 
   _handleServerMessage(msg) {
     switch (msg.type) {
+      case 'connected':
+        // Restore live state if server was already streaming
+        if (msg.streamActive) {
+          this._isLive = true;
+          // Set startTime before _setLiveUI so the timer starts from the correct time
+          if (msg.streamStartTime) this._startTime = msg.streamStartTime;
+          this._setLiveUI(true);
+        }
+        // Let app.js know about ingest state
+        document.dispatchEvent(new CustomEvent('server-state', { detail: msg }));
+        break;
+
       case 'stream_started':
         this._isLive = true;
         this._setLiveUI(true);
@@ -103,8 +112,18 @@ class StreamController {
         if (msg.level === 'warn') console.warn('[FFmpeg]', msg.data);
         break;
 
+      case 'ingest_connected':
+      case 'ingest_disconnected':
+        // Forward to app.js for layer status updates
+        document.dispatchEvent(new CustomEvent('ingest-event', { detail: msg }));
+        break;
+
+      case 'scene_updated':
+        // Scene config was updated (possibly by another browser tab)
+        document.dispatchEvent(new CustomEvent('remote-scene-update'));
+        break;
+
       case 'pong':
-        // Latency measurement placeholder
         break;
 
       default:
@@ -117,94 +136,97 @@ class StreamController {
   async startStream() {
     if (this._isLive) return;
 
+    // Push the current scene config to the server before starting
+    await this._syncSceneToServer();
+
+    try {
+      const res = await fetch('/api/stream/start', { method: 'POST' });
+      const body = await res.json();
+      if (!res.ok) {
+        showToast(`Cannot start: ${body.error}`, 'error');
+      }
+    } catch (err) {
+      showToast(`Start failed: ${err.message}`, 'error');
+    }
+  }
+
+  // ── Stop streaming ────────────────────────────────────────────────────────
+
+  async stopStream() {
+    try {
+      await fetch('/api/stream/stop', { method: 'POST' });
+    } catch (err) {
+      showToast(`Stop failed: ${err.message}`, 'error');
+    }
+  }
+
+  // ── Scene sync ────────────────────────────────────────────────────────────
+
+  /**
+   * Push the current browser-side scene layout to the server.
+   * Reads output settings from the UI, combines with the layer list from
+   * the scene editor, and POSTs the full config to /api/scene.
+   */
+  async _syncSceneToServer() {
     const url = document.getElementById('stream-url').value.trim();
     const key = document.getElementById('stream-key').value.trim();
     const protocol = document.getElementById('stream-protocol').value;
     const vbitrate = parseInt(document.getElementById('stream-vbitrate').value, 10) || 3000;
     const abitrate = parseInt(document.getElementById('stream-abitrate').value, 10) || 128;
-    const fpsEl = document.getElementById('output-fps');
-    const resEl = document.getElementById('output-resolution');
-    const fps = parseInt(fpsEl ? fpsEl.value : '30', 10);
-    const resolution = resEl ? resEl.value : '1280x720';
+    const resolution = document.getElementById('output-resolution').value || '1280x720';
+    const framerate = parseInt(document.getElementById('output-fps').value, 10) || 30;
 
-    if (!url) {
-      showToast('Please enter a stream URL', 'error');
-      return;
-    }
+    // Build layers list for the server (strip browser-only properties)
+    const layers = this._editor.layers.map(l => ({
+      id: l.id,
+      type: l.type,
+      sourceId: l.sourceId || null,
+      name: l.name,
+      x: Math.round(l.x),
+      y: Math.round(l.y),
+      width: Math.round(l.width),
+      height: Math.round(l.height),
+      visible: l.visible,
+      opacity: l.opacity,
+      // Text overlay properties
+      text: l.text,
+      textStyle: l.textStyle,
+      // Image overlay URL
+      imgUrl: l.imgUrl,
+    }));
 
-    const outputUrl = key ? `${url}/${key}` : url;
-
-    // Build combined stream: video from canvas + audio from sources
-    const videoStream = this._editor.outputCanvas.captureStream(fps);
-
-    const audioStream = this._sources.getAudioStream();
-    const tracks = [...videoStream.getVideoTracks()];
-    if (audioStream) tracks.push(...audioStream.getAudioTracks());
-    const combined = new MediaStream(tracks);
-
-    // Choose best supported mime type
-    const mimeType = getSupportedMimeType();
-    if (!mimeType) {
-      showToast('Browser does not support MediaRecorder — try Chrome/Firefox', 'error');
-      return;
-    }
-
-    // Send start command to server
-    this._sendControl({
-      type: 'start_stream',
-      config: { outputUrl, outputType: protocol, videoBitrate: vbitrate, audioBitrate: abitrate, framerate: fps, resolution },
-    });
-
-    // Start recording
+    // Pull current inputs from server (sources.js has already registered them)
+    let inputs = [];
     try {
-      this._recorder = new MediaRecorder(combined, {
-        mimeType,
-        videoBitsPerSecond: vbitrate * 1000,
-        audioBitsPerSecond: abitrate * 1000,
+      const r = await fetch('/api/scene');
+      const cfg = await r.json();
+      inputs = cfg.inputs || [];
+    } catch (_) {}
+
+    const scene = {
+      resolution,
+      framerate,
+      inputs,
+      layers,
+      output: { protocol, url, key, videoBitrate: vbitrate, audioBitrate: abitrate },
+    };
+
+    try {
+      await fetch('/api/scene', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(scene),
       });
     } catch (err) {
-      showToast(`MediaRecorder error: ${err.message}`, 'error');
-      return;
+      console.error('[Stream] Failed to sync scene:', err.message);
     }
-
-    this._recorder.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0 && this._ws && this._ws.readyState === WebSocket.OPEN) {
-        this._ws.send(e.data);
-      }
-    };
-
-    this._recorder.onerror = (e) => {
-      showToast(`Recording error: ${e.error.message}`, 'error');
-      this.stopStream();
-    };
-
-    this._recorder.start(RECORDER_CHUNK_INTERVAL_MS);
-    console.log(`[Recorder] Started with mime: ${mimeType}`);
-  }
-
-  // ── Stop streaming ────────────────────────────────────────────────────────
-
-  stopStream() {
-    if (this._recorder && this._recorder.state !== 'inactive') {
-      this._recorder.stop();
-    }
-    this._recorder = null;
-    this._sendControl({ type: 'stop_stream' });
   }
 
   _onStreamEnded(exitCode) {
-    if (this._recorder && this._recorder.state !== 'inactive') {
-      this._recorder.stop();
-    }
-    this._recorder = null;
     this._isLive = false;
     this._setLiveUI(false);
     if (exitCode !== null && exitCode !== 0 && exitCode !== undefined) {
       showToast(`Stream ended (FFmpeg exit ${exitCode})`, 'error');
-    } else if (exitCode === null) {
-      // Normal stop, no toast needed
-    } else {
-      showToast('Stream ended', '');
     }
   }
 
@@ -238,7 +260,7 @@ class StreamController {
   }
 
   _startTimer(el) {
-    this._startTime = Date.now();
+    this._startTime = this._startTime || Date.now();
     this._timerInterval = setInterval(() => {
       const elapsed = Math.floor((Date.now() - this._startTime) / 1000);
       const h = Math.floor(elapsed / 3600).toString().padStart(2, '0');
@@ -261,28 +283,10 @@ class StreamController {
     if (data.bitrate !== undefined) document.getElementById('stat-bitrate').textContent = data.bitrate;
   }
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
-
-  _sendControl(obj) {
-    if (this._ws && this._ws.readyState === WebSocket.OPEN) {
-      this._ws.send(JSON.stringify(obj));
-    }
-  }
-
   get isLive() { return this._isLive; }
 }
 
 // ── Module-level helpers ──────────────────────────────────────────────────────
-
-function getSupportedMimeType() {
-  const candidates = [
-    'video/webm;codecs=vp9,opus',
-    'video/webm;codecs=vp8,opus',
-    'video/webm;codecs=h264,opus',
-    'video/webm',
-  ];
-  return candidates.find(t => MediaRecorder.isTypeSupported(t)) || null;
-}
 
 function showToast(message, type = '') {
   const toast = document.getElementById('toast');
@@ -295,3 +299,4 @@ function showToast(message, type = '') {
     toast.style.display = 'none';
   }, 3500);
 }
+

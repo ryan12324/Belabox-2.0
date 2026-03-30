@@ -30,6 +30,21 @@
 
     <!-- Left Sidebar: Sources & Layers -->
     <aside class="sidebar sidebar-left">
+      <!-- Ingest Info -->
+      <section class="panel">
+        <div class="panel-header">
+          <h3>Hardware Ingest</h3>
+        </div>
+        <div class="ingest-info" id="ingest-info">
+          <p class="prop-label">Point your hardware encoder to:</p>
+          <code class="ingest-url" id="ingest-url">rtmp://…:1935/live/&lt;key&gt;</code>
+          <p class="prop-label" style="margin-top:8px">Active ingest streams:</p>
+          <div id="ingest-active-list" class="ingest-active-list">
+            <span class="ingest-none">None connected</span>
+          </div>
+        </div>
+      </section>
+
       <!-- Sources -->
       <section class="panel">
         <div class="panel-header">
@@ -72,8 +87,8 @@
         <button class="btn-tool" id="btn-add-text" title="Add text overlay">T Text</button>
         <button class="btn-tool" id="btn-add-image" title="Add image overlay">🖼 Image</button>
         <span class="toolbar-sep">|</span>
-        <button class="btn-tool" id="btn-add-camera" title="Add webcam">📷 Camera</button>
-        <button class="btn-tool" id="btn-add-screen" title="Add screen capture">🖥 Screen</button>
+        <button class="btn-tool" id="btn-add-rtmp" title="Add RTMP ingest source">📡 RTMP In</button>
+        <button class="btn-tool" id="btn-add-srt" title="Add SRT source">🔗 SRT In</button>
         <span class="toolbar-sep flex-spacer"></span>
         <label class="label-sm">Output:</label>
         <select class="select-sm" id="output-resolution">
@@ -106,7 +121,7 @@
           <h3>Stream Settings</h3>
         </div>
         <div class="stream-settings">
-          <label class="prop-label">Protocol</label>
+          <label class="prop-label">Output Protocol</label>
           <select class="prop-input" id="stream-protocol">
             <option value="rtmp">RTMP</option>
             <option value="srt">SRT</option>
@@ -148,30 +163,100 @@
   <div class="modal-overlay" id="modal-add-source" style="display:none">
     <div class="modal">
       <div class="modal-header">
-        <h2>Add Source</h2>
+        <h2>Add Hardware Source</h2>
         <button class="modal-close" data-modal="modal-add-source">✕</button>
       </div>
       <div class="modal-body source-picker">
-        <button class="source-type-btn" data-type="camera">
-          <span class="source-icon">📷</span>
-          <span class="source-label">Camera / Webcam</span>
-          <span class="source-desc">Capture from a connected camera</span>
+        <button class="source-type-btn" data-type="rtmp">
+          <span class="source-icon">📡</span>
+          <span class="source-label">RTMP Ingest</span>
+          <span class="source-desc">Hardware encoder pushes RTMP to Belabox server</span>
         </button>
-        <button class="source-type-btn" data-type="screen">
-          <span class="source-icon">🖥</span>
-          <span class="source-label">Screen Capture</span>
-          <span class="source-desc">Capture your screen or an application window</span>
+        <button class="source-type-btn" data-type="rtmp_pull">
+          <span class="source-icon">⬇</span>
+          <span class="source-label">RTMP Pull</span>
+          <span class="source-desc">Server pulls from an external RTMP stream URL</span>
+        </button>
+        <button class="source-type-btn" data-type="srt">
+          <span class="source-icon">🔗</span>
+          <span class="source-label">SRT Input</span>
+          <span class="source-desc">Connect to a hardware encoder via SRT protocol</span>
         </button>
         <button class="source-type-btn" data-type="text">
           <span class="source-icon">T</span>
           <span class="source-label">Text Overlay</span>
-          <span class="source-desc">Add scrolling or static text to the scene</span>
+          <span class="source-desc">Add a text overlay composited by FFmpeg</span>
         </button>
         <button class="source-type-btn" data-type="image">
           <span class="source-icon">🖼</span>
           <span class="source-label">Image / Logo</span>
-          <span class="source-desc">Add an image or logo overlay</span>
+          <span class="source-desc">Add an image overlay (e.g. logo, watermark)</span>
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add RTMP Ingest Modal -->
+  <div class="modal-overlay" id="modal-add-rtmp" style="display:none">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2>📡 Add RTMP Ingest</h2>
+        <button class="modal-close" data-modal="modal-add-rtmp">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-hint">
+          Point your hardware encoder (camera, encoder box, OBS, etc.) to:<br>
+          <strong id="modal-ingest-url" class="ingest-url-modal">rtmp://…:1935/live/&lt;key&gt;</strong>
+        </p>
+        <label class="prop-label">Source Name</label>
+        <input class="prop-input" type="text" id="rtmp-name-input" placeholder="Camera 1" />
+        <label class="prop-label">Stream Key</label>
+        <input class="prop-input" type="text" id="rtmp-key-input" placeholder="camera1" />
+        <p class="modal-hint-sm">Use the same key in your hardware encoder settings.</p>
+        <div class="modal-actions">
+          <button class="btn btn-primary" id="btn-confirm-add-rtmp">Add Source</button>
+          <button class="btn" data-modal="modal-add-rtmp">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add RTMP Pull Modal -->
+  <div class="modal-overlay" id="modal-add-rtmp-pull" style="display:none">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2>⬇ Add RTMP Pull</h2>
+        <button class="modal-close" data-modal="modal-add-rtmp-pull">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="prop-label">Source Name</label>
+        <input class="prop-input" type="text" id="rtmp-pull-name-input" placeholder="Remote Camera" />
+        <label class="prop-label">RTMP URL</label>
+        <input class="prop-input" type="text" id="rtmp-pull-url-input" placeholder="rtmp://192.168.1.100/live/stream" />
+        <div class="modal-actions">
+          <button class="btn btn-primary" id="btn-confirm-add-rtmp-pull">Add Source</button>
+          <button class="btn" data-modal="modal-add-rtmp-pull">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add SRT Modal -->
+  <div class="modal-overlay" id="modal-add-srt" style="display:none">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2>🔗 Add SRT Input</h2>
+        <button class="modal-close" data-modal="modal-add-srt">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="prop-label">Source Name</label>
+        <input class="prop-input" type="text" id="srt-name-input" placeholder="SRT Camera" />
+        <label class="prop-label">SRT URL</label>
+        <input class="prop-input" type="text" id="srt-url-input" placeholder="srt://192.168.1.100:4000" />
+        <div class="modal-actions">
+          <button class="btn btn-primary" id="btn-confirm-add-srt">Add Source</button>
+          <button class="btn" data-modal="modal-add-srt">Cancel</button>
+        </div>
       </div>
     </div>
   </div>
@@ -208,3 +293,4 @@
   <script src="js/app.js"></script>
 </body>
 </html>
+

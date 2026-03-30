@@ -1,18 +1,41 @@
 # Belabox 2.0 — Web-Based Streaming Studio
 
-A web-based OBS-like streaming studio for **RTMP** and **SRT** streams, with easy overlay editing, multi-source support, and a drag-and-drop scene editor — all in your browser.
+A web-based streaming studio for **RTMP** and **SRT** streams. All video processing runs **server-side** — hardware encoders push RTMP/SRT streams directly to the Belabox server, which composites them using FFmpeg and outputs to any RTMP/SRT destination. The browser is a pure configuration UI.
 
 ## Features
 
-- 🎬 **Live scene editor** — drag, resize, and reorder sources on a real-time canvas preview
-- 📷 **Multiple cameras** — add as many webcams as your system has available
-- 🖥 **Screen / window capture** — capture your entire screen or a specific application window
-- 📝 **Text overlays** — configurable font, size, colour, alignment, and background
-- 🖼 **Image / logo overlays** — load from a URL or upload a local file
-- 🔁 **Layer management** — reorder layers, toggle visibility, adjust opacity
-- 🔴 **RTMP & SRT output** — stream to Twitch, YouTube, Kick, or any RTMP/SRT endpoint
-- 📊 **Live stream stats** — frame count, FPS, and bitrate from FFmpeg
-- ⚡ **Low-latency pipeline** — browser captures → WebSocket → FFmpeg → RTMP/SRT
+- 📡 **Hardware RTMP ingest** — built-in RTMP server on port 1935 receives streams from cameras, encoder boxes, hardware capture cards, etc.
+- 🔗 **SRT & RTMP pull** — connect to external SRT or RTMP stream URLs
+- 🎬 **Server-side FFmpeg compositing** — multi-source overlay using `filter_complex` (all processing on the server, nothing in the browser)
+- 📝 **Text overlays** — configurable font, size, colour, alignment, bold/italic, background opacity — rendered by FFmpeg `drawtext`
+- 🖼 **Image / logo overlays** — composited by FFmpeg `overlay`
+- 🔁 **Layer management** — drag and resize sources in the browser to set positions; server builds the FFmpeg layout
+- 🔴 **RTMP & SRT output** — stream composed output to Twitch, YouTube, Kick, or any endpoint
+- 📊 **Live stats** — frame count, FPS, and bitrate from FFmpeg relayed to the browser
+- ⚡ **Real-time ingest monitoring** — browser shows which hardware encoders are actively connected
+
+## Architecture
+
+```
+Hardware Encoder (Camera / GoPro / Encoder Box)
+    │  RTMP push to rtmp://SERVER:1935/live/<key>
+    ▼
+Node.js Server  ──────────────────────────────────────────────────
+│                                                                 │
+│  node-media-server (RTMP ingest)    Express (Web UI + REST)    │
+│           │                                │                    │
+│           └──────────────┬─────────────────┘                    │
+│                          ▼                                      │
+│              FFmpeg filter_complex                              │
+│              (compositing, overlays,                            │
+│               H.264 encode)                                     │
+│                          │                                      │
+│                          ▼                                      │
+│              RTMP / SRT output to                               │
+│              Twitch / YouTube / etc.                            │
+└─────────────────────────────────────────────────────────────────┘
+         ▲ configure via browser (REST + WebSocket)
+```
 
 ## Requirements
 
@@ -20,7 +43,7 @@ A web-based OBS-like streaming studio for **RTMP** and **SRT** streams, with eas
 |---|---|
 | Node.js | ≥ 16 |
 | FFmpeg | any recent version (must be on `$PATH`) |
-| Browser | Chrome 88+ or Firefox 90+ |
+| Browser | Chrome 88+ or Firefox 90+ (for the config UI only) |
 
 ### Installing FFmpeg
 
@@ -40,65 +63,51 @@ npm install
 
 # 3. Start the server
 npm start
-# → http://localhost:3000
+# → Web UI: http://localhost:3000
+# → RTMP ingest: rtmp://YOUR_SERVER_IP:1935/live/<stream-key>
 ```
 
-Set a custom port with the `PORT` environment variable:
+Set custom ports with environment variables:
 
 ```bash
-PORT=8080 npm start
+PORT=8080 RTMP_PORT=1936 npm start
 ```
 
 ## Usage
 
-1. **Open** `http://localhost:3000` in Chrome or Firefox
-2. **Add sources** using the toolbar or the **＋** button in the Sources panel:
-   - **Camera** — grants webcam access and adds it full-screen
-   - **Screen** — opens the browser screen-picker
-   - **Text** — adds a configurable text overlay (double-click on canvas to edit inline)
-   - **Image** — paste a URL or upload a file
-3. **Arrange layers** — drag sources on the canvas to position them; drag the corner handles to resize
-4. **Edit properties** — select any layer to configure it in the right-hand Properties panel
-5. **Configure stream** in the right sidebar:
-   - Choose **RTMP** or **SRT** protocol
-   - Enter your stream URL (e.g. `rtmp://live.twitch.tv/app`)
-   - Enter your stream key
-   - Set video/audio bitrate and output resolution
-6. Click **▶ Go Live** — the browser encodes video and sends it to the server where FFmpeg pushes it to your endpoint
-7. Click **■ Stop** to end the stream
-
-## Architecture
-
-```
-Browser                          Node.js Server
-─────────────────────            ──────────────────────────────
-getUserMedia / getDisplayMedia   Express (serves static files)
-         ↓                              ↓
-Canvas compositor (2D API)       WebSocket server (ws)
-         ↓                              ↓
-MediaRecorder (WebM/VP8)         FFmpeg child process
-         ↓  ←── WebSocket ──────→      ↓
-Binary chunks streamed           libx264 encode
-                                        ↓
-                                 RTMP / SRT output
-```
+1. **Open** `http://localhost:3000` in a browser
+2. Note the **RTMP ingest URL** shown in the Hardware Ingest panel on the left
+3. **Configure your hardware encoder** (camera, GoPro, encoder box, OBS, etc.) to push to:
+   ```
+   rtmp://YOUR_SERVER_IP:1935/live/camera1
+   ```
+4. **Add sources** in Belabox via the **＋** button or toolbar:
+   - **RTMP Ingest** — enter the same stream key you used above (e.g. `camera1`)
+   - **SRT Input** — enter the SRT URL of your hardware device
+   - **RTMP Pull** — Belabox pulls from an external RTMP stream
+   - **Text** — text overlay rendered by FFmpeg `drawtext`
+   - **Image** — logo / watermark composited by FFmpeg
+5. **Arrange the scene** — drag sources in the canvas preview to position them; resize with handles. All positions configure the FFmpeg `filter_complex` layout
+6. **Configure output** in the right sidebar: protocol, URL, stream key, bitrate
+7. Click **▶ Go Live** — the server starts FFmpeg compositing and pushes to your streaming platform
+8. Click **■ Stop** to end the stream
 
 ## Project Structure
 
 ```
 Belabox-2.0/
-├── server.js               Node.js WebSocket + HTTP server
+├── server.js               Node.js server: RTMP ingest + REST API + FFmpeg compositor
 ├── package.json
 ├── public/
-│   ├── index.html          Application shell
+│   ├── index.html          Browser config UI shell
 │   ├── css/
 │   │   └── style.css       Dark theme UI
 │   └── js/
 │       ├── app.js          Main bootstrap & UI wiring
-│       ├── scene-editor.js Canvas compositor, drag/drop
-│       ├── sources.js      Camera & screen capture
-│       ├── overlays.js     Text & image overlays
-│       └── stream.js       WebSocket, MediaRecorder, stats
+│       ├── scene-editor.js Canvas layout editor, drag/drop
+│       ├── sources.js      Server-side RTMP/SRT source management
+│       ├── overlays.js     Text & image overlay configuration
+│       └── stream.js       WebSocket client, REST stream control
 └── README.md
 ```
 

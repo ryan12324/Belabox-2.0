@@ -155,28 +155,9 @@ class SceneEditor {
     const { x, y, width, height } = layer;
 
     switch (layer.type) {
-      case 'camera':
-      case 'screen':
-        if (layer.videoEl && layer.videoEl.readyState >= 2) {
-          if (layer.mirror) {
-            ctx.save();
-            ctx.scale(-1, 1);
-            ctx.drawImage(layer.videoEl, -(x + width), y, width, height);
-            ctx.restore();
-          } else {
-            ctx.drawImage(layer.videoEl, x, y, width, height);
-          }
-        } else {
-          // Placeholder while loading
-          ctx.fillStyle = '#111';
-          ctx.fillRect(x, y, width, height);
-          ctx.fillStyle = '#444';
-          ctx.font = '14px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText(layer.type === 'camera' ? '📷 Waiting…' : '🖥 Waiting…',
-            x + width / 2, y + height / 2);
-        }
+      case 'rtmp':
+      case 'srt':
+        this._drawVideoSourcePlaceholder(ctx, layer);
         break;
 
       case 'text':
@@ -199,6 +180,78 @@ class SceneEditor {
 
       default:
         break;
+    }
+  }
+
+  /**
+   * Draw a placeholder for a server-side video source.
+   * The actual compositing is done by FFmpeg on the server; this shows
+   * the user the layout and which streams are actively ingesting.
+   */
+  _drawVideoSourcePlaceholder(ctx, layer) {
+    const { x, y, width, height } = layer;
+    const isActive = layer._isActive; // set by app.js based on ingest events
+    const isRtmp = layer.type === 'rtmp';
+
+    // Dark background tinted by stream type
+    const bg = isRtmp ? '#0a1a0a' : '#0a0a1a';
+    ctx.fillStyle = bg;
+    ctx.fillRect(x, y, width, height);
+
+    // Border: green if live, grey if waiting
+    ctx.strokeStyle = isActive ? '#2ecc71' : '#444';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x + 1, y + 1, width - 2, height - 2);
+
+    // Status indicator dot
+    const dotR = Math.min(8, width / 20);
+    const dotX = x + width - dotR - 8;
+    const dotY = y + dotR + 8;
+    ctx.beginPath();
+    ctx.arc(dotX, dotY, dotR, 0, Math.PI * 2);
+    ctx.fillStyle = isActive ? '#2ecc71' : '#555';
+    ctx.fill();
+
+    // Icon + label
+    const icon = isRtmp ? '📡' : '🔗';
+    const label = layer.name || (isRtmp ? 'RTMP Source' : 'SRT Source');
+    const subLabel = isActive ? '● Live from hardware' : '○ Waiting for stream…';
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    const cx = x + width / 2;
+    const cy = y + height / 2;
+
+    // Icon
+    ctx.font = `${Math.min(32, height / 6)}px sans-serif`;
+    ctx.fillStyle = '#888';
+    ctx.fillText(icon, cx, cy - Math.min(24, height / 8));
+
+    // Source name
+    ctx.font = `bold ${Math.min(16, height / 10)}px sans-serif`;
+    ctx.fillStyle = isActive ? '#2ecc71' : '#888';
+    ctx.fillText(label, cx, cy + Math.min(8, height / 16));
+
+    // Status
+    ctx.font = `${Math.min(11, height / 14)}px sans-serif`;
+    ctx.fillStyle = isActive ? '#27ae60' : '#555';
+    ctx.fillText(subLabel, cx, cy + Math.min(28, height / 6));
+
+    // Stream key / URL hint at bottom
+    const hint = layer._input
+      ? (isRtmp ? `key: ${layer._input.streamKey || ''}` : layer._input.url || '')
+      : '';
+    if (hint) {
+      ctx.font = `${Math.min(10, height / 16)}px monospace`;
+      ctx.fillStyle = '#444';
+      // Truncate hint to fit
+      const maxW = width - 20;
+      let displayHint = hint;
+      while (ctx.measureText(displayHint).width > maxW && displayHint.length > 6) {
+        displayHint = displayHint.slice(0, -4) + '…';
+      }
+      ctx.fillText(displayHint, cx, y + height - Math.min(12, height / 10));
     }
   }
 

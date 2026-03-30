@@ -3,7 +3,8 @@
 const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
-const { spawn } = require('child_process');
+const NodeMediaServer = require('node-media-server');
+const { spawn, spawnSync } = require('child_process');
 const path = require('path');
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -12,6 +13,12 @@ const path = require('path');
 const FFMPEG_GRACEFUL_SHUTDOWN_MS = 2000;
 /** ms timeout for checking whether `ffmpeg -version` succeeds */
 const FFMPEG_VERSION_CHECK_TIMEOUT_MS = 3000;
+/** RTMP ingest port for hardware encoders */
+const RTMP_PORT = process.env.RTMP_PORT || 1935;
+/** HTTP port for the web UI */
+const HTTP_PORT = process.env.PORT || 3000;
+
+// ── Express + WebSocket ───────────────────────────────────────────────────────
 
 const app = express();
 const server = http.createServer(app);
@@ -20,23 +27,438 @@ const wss = new WebSocket.Server({ server });
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Track active stream sessions
-const sessions = new Map();
-let clientCounter = 0;
+// ── Global state ──────────────────────────────────────────────────────────────
+
+/** Active FFmpeg compositing process */
+let ffmpegProcess = null;
+let streamActive = false;
+let streamStartTime = null;
+
+/**
+ * Scene configuration maintained in memory.
+ * Browser pushes updates; server reads it when building FFmpeg args.
+ *
+ * Shape:
+ * {
+ *   resolution: '1280x720',
+ *   framerate: 30,
+ *   inputs: [{ id, name, type ('rtmp'|'srt'|'rtmp_pull'), streamKey?, url? }],
+ *   layers: [{ id, sourceId?, type, x, y, width, height, visible, opacity, text?, textStyle?, imgUrl? }],
+ *   output: { protocol, url, key, videoBitrate, audioBitrate }
+ * }
+ */
+let sceneConfig = {
+  resolution: '1280x720',
+  framerate: 30,
+  inputs: [],
+  layers: [],
+  output: {
+    protocol: 'rtmp',
+    url: '',
+    key: '',
+    videoBitrate: 3000,
+    audioBitrate: 128,
+  },
+};
+
+/** Connected ingest streams: streamKey → { publishTime } */
+const activeIngestStreams = new Map();
+
+// ── RTMP Ingest Server (node-media-server) ────────────────────────────────────
+
+const nmsConfig = {
+  rtmp: {
+    port: RTMP_PORT,
+    chunk_size: 60000,
+    gop_cache: true,
+    ping: 30,
+    ping_timeout: 60,
+  },
+  logType: 0, // silent; we handle our own logging
+};
+
+const nms = new NodeMediaServer(nmsConfig);
+
+nms.on('prePublish', (id, streamPath, _args) => {
+  const streamKey = streamPath.split('/').pop();
+  console.log(`[RTMP] Ingest started: key=${streamKey} session=${id}`);
+  activeIngestStreams.set(streamKey, { publishTime: Date.now(), sessionId: id });
+  broadcast({ type: 'ingest_connected', streamKey });
+});
+
+nms.on('donePublish', (id, streamPath, _args) => {
+  const streamKey = streamPath.split('/').pop();
+  console.log(`[RTMP] Ingest ended: key=${streamKey} session=${id}`);
+  activeIngestStreams.delete(streamKey);
+  broadcast({ type: 'ingest_disconnected', streamKey });
+});
 
 // ── REST API ──────────────────────────────────────────────────────────────────
 
 app.get('/api/status', (_req, res) => {
   res.json({
-    activeStreams: sessions.size,
     version: '2.0.0',
     ffmpegAvailable: isFFmpegAvailable(),
+    streamActive,
+    streamStartTime,
+    rtmpIngestPort: RTMP_PORT,
+    activeIngestStreams: Object.fromEntries(activeIngestStreams),
   });
 });
 
+/** Get the current scene configuration */
+app.get('/api/scene', (_req, res) => {
+  res.json(sceneConfig);
+});
+
+/** Replace the full scene configuration */
+app.post('/api/scene', (req, res) => {
+  const body = req.body;
+  if (!body || typeof body !== 'object') {
+    return res.status(400).json({ error: 'Invalid scene config body' });
+  }
+  sceneConfig = { ...sceneConfig, ...body };
+  console.log('[Scene] Config updated');
+  broadcast({ type: 'scene_updated' });
+  res.json({ ok: true });
+});
+
+/** Partially update the scene configuration */
+app.patch('/api/scene', (req, res) => {
+  const body = req.body;
+  if (!body || typeof body !== 'object') {
+    return res.status(400).json({ error: 'Invalid patch body' });
+  }
+  sceneConfig = deepMerge(sceneConfig, body);
+  broadcast({ type: 'scene_updated' });
+  res.json({ ok: true });
+});
+
+/** Start the composited output stream */
+app.post('/api/stream/start', (_req, res) => {
+  if (streamActive) {
+    return res.status(409).json({ error: 'Stream already active' });
+  }
+  const err = startCompositor();
+  if (err) {
+    return res.status(500).json({ error: err });
+  }
+  res.json({ ok: true });
+});
+
+/** Stop the composited output stream */
+app.post('/api/stream/stop', (_req, res) => {
+  stopCompositor();
+  res.json({ ok: true });
+});
+
+// ── FFmpeg compositor ─────────────────────────────────────────────────────────
+
+/**
+ * Build the FFmpeg argument list from the current sceneConfig using
+ * filter_complex to composite multiple server-side RTMP/SRT inputs with
+ * text and image overlays.
+ *
+ * Returns null on success, or an error string if config is invalid.
+ */
+function startCompositor() {
+  const config = sceneConfig;
+  const { resolution, framerate, inputs, layers, output } = config;
+
+  if (!output || !output.url) {
+    return 'No output URL configured';
+  }
+
+  const [outW, outH] = (resolution || '1280x720').split('x').map(Number);
+  const fps = framerate || 30;
+  const vBitrate = `${output.videoBitrate || 3000}k`;
+  const aBitrate = `${output.audioBitrate || 128}k`;
+
+  // Collect the video layers that reference an input source
+  const videoLayers = layers.filter(
+    l => l.visible !== false && l.sourceId && inputs.find(i => i.id === l.sourceId)
+  );
+
+  const args = ['-loglevel', 'warning'];
+
+  // ── Inputs ────────────────────────────────────────────────────────────────
+  const inputIndexMap = new Map(); // input.id → ffmpeg input index
+
+  if (videoLayers.length === 0) {
+    // No video inputs — create a black background using lavfi
+    args.push('-f', 'lavfi', '-i', `color=c=black:s=${outW}x${outH}:r=${fps}`);
+  } else {
+    for (const vl of videoLayers) {
+      const input = inputs.find(i => i.id === vl.sourceId);
+      if (!input) continue;
+      if (!inputIndexMap.has(input.id)) {
+        const idx = inputIndexMap.size;
+        inputIndexMap.set(input.id, idx);
+        const inputUrl = buildInputUrl(input);
+        if (!inputUrl) continue;
+        args.push('-i', inputUrl);
+      }
+    }
+  }
+
+  // ── filter_complex ────────────────────────────────────────────────────────
+  const filterParts = [];
+  let lastVideoTag = null;
+
+  if (videoLayers.length === 0) {
+    // Just the black background
+    lastVideoTag = '0:v';
+  } else {
+    // Scale first input to full output size as the background
+    const firstLayer = videoLayers[0];
+    const firstInputIdx = inputIndexMap.get(firstLayer.sourceId) ?? 0;
+
+    filterParts.push(
+      `[${firstInputIdx}:v]scale=${firstLayer.width}:${firstLayer.height},` +
+      `pad=${outW}:${outH}:${firstLayer.x}:${firstLayer.y}[base]`
+    );
+    lastVideoTag = 'base';
+
+    // Overlay remaining video layers on top
+    for (let i = 1; i < videoLayers.length; i++) {
+      const vl = videoLayers[i];
+      const inputIdx = inputIndexMap.get(vl.sourceId) ?? 0;
+      const scaledTag = `v${i}scaled`;
+      const composedTag = `composed${i}`;
+
+      filterParts.push(
+        `[${inputIdx}:v]scale=${vl.width}:${vl.height}[${scaledTag}]`
+      );
+      filterParts.push(
+        `[${lastVideoTag}][${scaledTag}]overlay=${vl.x}:${vl.y}[${composedTag}]`
+      );
+      lastVideoTag = composedTag;
+    }
+  }
+
+  // ── Text overlays ─────────────────────────────────────────────────────────
+  const textLayers = layers.filter(
+    l => l.visible !== false && l.type === 'text' && l.text
+  );
+
+  for (let i = 0; i < textLayers.length; i++) {
+    const tl = textLayers[i];
+    const s = tl.textStyle || {};
+    const outTag = `text${i}out`;
+
+    const fontSize = s.fontSize || 32;
+    const fontColor = (s.color || '#ffffff').replace('#', '');
+    const bgColor = s.bgColor ? s.bgColor.replace('#', '') : '000000';
+    const bgOpacity = s.bgOpacity !== undefined ? s.bgOpacity : 0.5;
+    const bold = s.bold ? 1 : 0;
+    const italic = s.italic ? 1 : 0;
+    const fontFamily = (s.fontFamily || 'Arial').replace(/[^a-zA-Z\s]/g, '');
+
+    // Escape text for FFmpeg drawtext
+    const escapedText = (tl.text || '')
+      .replace(/\\/g, '\\\\')
+      .replace(/'/g, "\\'")
+      .replace(/:/g, '\\:');
+
+    const bgFilter = `box=1:boxcolor=0x${bgColor}@${bgOpacity}:boxborderw=6`;
+
+    const drawtext =
+      `[${lastVideoTag}]drawtext=` +
+      `text='${escapedText}':` +
+      `x=${Math.round(tl.x)}:y=${Math.round(tl.y)}:` +
+      `fontsize=${fontSize}:fontcolor=0x${fontColor}:` +
+      `font=${fontFamily}:bold=${bold}:italic=${italic}:` +
+      `${bgFilter}[${outTag}]`;
+
+    filterParts.push(drawtext);
+    lastVideoTag = outTag;
+  }
+
+  // ── Image overlays ────────────────────────────────────────────────────────
+  const imageLayers = layers.filter(
+    l => l.visible !== false && l.type === 'image' && l.imgUrl
+  );
+
+  for (let i = 0; i < imageLayers.length; i++) {
+    const il = imageLayers[i];
+    const imgIdx = (inputIndexMap.size) + i;
+    const scaledTag = `img${i}scaled`;
+    const composedTag = `img${i}out`;
+
+    args.push('-i', il.imgUrl);
+    filterParts.push(
+      `[${imgIdx}:v]scale=${il.width}:${il.height}[${scaledTag}]`
+    );
+    filterParts.push(
+      `[${lastVideoTag}][${scaledTag}]overlay=${il.x}:${il.y}[${composedTag}]`
+    );
+    lastVideoTag = composedTag;
+  }
+
+  // ── Assemble filter_complex ───────────────────────────────────────────────
+  if (filterParts.length > 0) {
+    args.push('-filter_complex', filterParts.join(';'));
+    args.push('-map', `[${lastVideoTag}]`);
+  } else {
+    args.push('-map', `0:v`);
+  }
+
+  // Audio: mix all input audio tracks
+  if (videoLayers.length > 0) {
+    args.push('-map', '0:a?');
+  }
+
+  // ── Encode ────────────────────────────────────────────────────────────────
+  args.push(
+    '-c:v', 'libx264',
+    '-preset', 'veryfast',
+    '-tune', 'zerolatency',
+    '-b:v', vBitrate,
+    '-maxrate', vBitrate,
+    '-bufsize', `${(output.videoBitrate || 3000) * 2}k`,
+    '-pix_fmt', 'yuv420p',
+    '-g', String(fps * 2),
+    '-r', String(fps),
+    '-c:a', 'aac',
+    '-b:a', aBitrate,
+    '-ar', '44100',
+    '-ac', '2'
+  );
+
+  // ── Output ────────────────────────────────────────────────────────────────
+  const outputUrl = output.key ? `${output.url}/${output.key}` : output.url;
+
+  if (output.protocol === 'srt') {
+    args.push('-f', 'mpegts', outputUrl);
+  } else {
+    args.push('-f', 'flv', outputUrl);
+  }
+
+  console.log(`[FFmpeg] Starting compositor: ffmpeg ${args.join(' ')}`);
+
+  try {
+    ffmpegProcess = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (err) {
+    console.error('[FFmpeg] Failed to spawn:', err.message);
+    return `Failed to start FFmpeg: ${err.message}`;
+  }
+
+  streamActive = true;
+  streamStartTime = Date.now();
+
+  ffmpegProcess.stderr.on('data', (chunk) => {
+    const line = chunk.toString();
+    if (/frame=|fps=|bitrate=|speed=/.test(line)) {
+      broadcast({ type: 'stream_stats', data: parseFFmpegStats(line) });
+    }
+    if (/Error|error|warning/i.test(line)) {
+      broadcast({ type: 'stream_log', level: 'warn', data: line.trim() });
+    }
+  });
+
+  ffmpegProcess.on('close', (code) => {
+    console.log(`[FFmpeg] Compositor exited with code ${code}`);
+    streamActive = false;
+    streamStartTime = null;
+    ffmpegProcess = null;
+    broadcast({ type: 'stream_ended', exitCode: code });
+  });
+
+  ffmpegProcess.on('error', (err) => {
+    console.error('[FFmpeg] Process error:', err.message);
+    streamActive = false;
+    streamStartTime = null;
+    broadcast({ type: 'stream_error', message: err.message });
+  });
+
+  broadcast({ type: 'stream_started', config: { resolution, framerate, output } });
+  return null;
+}
+
+function stopCompositor() {
+  if (!ffmpegProcess) {
+    broadcast({ type: 'stream_stopped' });
+    return;
+  }
+
+  // Capture reference so the timeout closure uses it even if the outer
+  // variable is reassigned (e.g. by a new stream starting during the wait).
+  const proc = ffmpegProcess;
+  setTimeout(() => {
+    if (!proc.killed) {
+      proc.kill('SIGTERM');
+    }
+  }, FFMPEG_GRACEFUL_SHUTDOWN_MS);
+
+  ffmpegProcess = null;
+  streamActive = false;
+  streamStartTime = null;
+  broadcast({ type: 'stream_stopped' });
+}
+
+/** Build an FFmpeg-compatible URL for a given input source */
+function buildInputUrl(input) {
+  if (input.type === 'rtmp') {
+    // Ingest from local node-media-server
+    return `rtmp://127.0.0.1:${RTMP_PORT}/live/${input.streamKey}`;
+  }
+  if (input.type === 'rtmp_pull' || input.type === 'srt') {
+    return input.url || null;
+  }
+  return null;
+}
+
+// ── WebSocket ─────────────────────────────────────────────────────────────────
+
+wss.on('connection', (ws, req) => {
+  const clientIp = req.socket.remoteAddress;
+  console.log(`[WS] Client connected from ${clientIp}`);
+
+  // Send current state on connect
+  send(ws, {
+    type: 'connected',
+    version: '2.0.0',
+    streamActive,
+    streamStartTime,
+    rtmpIngestPort: RTMP_PORT,
+    sceneConfig,
+    activeIngestStreams: Object.fromEntries(activeIngestStreams),
+  });
+
+  ws.on('message', (data) => {
+    try {
+      const msg = JSON.parse(data.toString());
+      if (msg.type === 'ping') send(ws, { type: 'pong', ts: Date.now() });
+    } catch (_) {
+      // Ignore malformed messages
+    }
+  });
+
+  ws.on('error', (err) => {
+    console.error('[WS] Client error:', err.message);
+  });
+});
+
+/** Send JSON to a single WebSocket client */
+function send(ws, obj) {
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(obj));
+  }
+}
+
+/** Broadcast JSON to all connected WebSocket clients */
+function broadcast(obj) {
+  const msg = JSON.stringify(obj);
+  for (const ws of wss.clients) {
+    if (ws.readyState === WebSocket.OPEN) ws.send(msg);
+  }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
 function isFFmpegAvailable() {
   try {
-    const result = require('child_process').spawnSync('ffmpeg', ['-version'], {
+    const result = spawnSync('ffmpeg', ['-version'], {
       timeout: FFMPEG_VERSION_CHECK_TIMEOUT_MS,
       stdio: 'pipe',
     });
@@ -44,210 +466,6 @@ function isFFmpegAvailable() {
   } catch {
     return false;
   }
-}
-
-// ── WebSocket ─────────────────────────────────────────────────────────────────
-
-wss.on('connection', (ws, req) => {
-  const clientId = ++clientCounter;
-  const clientIp = req.socket.remoteAddress;
-  console.log(`[WS] Client ${clientId} connected from ${clientIp}`);
-
-  let ffmpegProcess = null;
-  let streamActive = false;
-  let bytesReceived = 0;
-  let streamStartTime = null;
-
-  // Send initial state
-  send(ws, { type: 'connected', clientId, version: '2.0.0' });
-
-  ws.on('message', (data, isBinary) => {
-    if (!isBinary) {
-      // Control message (JSON)
-      try {
-        const msg = JSON.parse(data.toString());
-        handleControl(msg);
-      } catch (err) {
-        console.error(`[WS] Invalid JSON from client ${clientId}:`, err.message);
-      }
-      return;
-    }
-
-    // Binary = video chunk — pipe to FFmpeg
-    bytesReceived += data.length;
-    if (ffmpegProcess && ffmpegProcess.stdin.writable) {
-      ffmpegProcess.stdin.write(data, (err) => {
-        if (err && err.code !== 'EPIPE') {
-          console.error(`[FFmpeg] stdin write error client ${clientId}:`, err.message);
-        }
-      });
-    }
-  });
-
-  ws.on('close', (code, reason) => {
-    console.log(`[WS] Client ${clientId} disconnected (${code} ${reason})`);
-    stopStream();
-    sessions.delete(clientId);
-  });
-
-  ws.on('error', (err) => {
-    console.error(`[WS] Client ${clientId} error:`, err.message);
-  });
-
-  // ── Control message handler ─────────────────────────────────────────────────
-
-  function handleControl(msg) {
-    switch (msg.type) {
-      case 'start_stream':
-        startStream(msg.config || {});
-        break;
-      case 'stop_stream':
-        stopStream();
-        break;
-      case 'ping':
-        send(ws, { type: 'pong', ts: Date.now() });
-        break;
-      default:
-        console.warn(`[WS] Unknown message type from client ${clientId}: ${msg.type}`);
-    }
-  }
-
-  // ── Stream management ───────────────────────────────────────────────────────
-
-  function startStream(config) {
-    if (streamActive) {
-      stopStream();
-    }
-
-    const {
-      outputUrl,
-      outputType = 'rtmp',
-      videoBitrate = 3000,
-      audioBitrate = 128,
-      framerate = 30,
-      resolution = '1280x720',
-    } = config;
-
-    if (!outputUrl) {
-      send(ws, { type: 'stream_error', message: 'No output URL provided' });
-      return;
-    }
-
-    const args = buildFFmpegArgs({
-      outputUrl,
-      outputType,
-      videoBitrate,
-      audioBitrate,
-      framerate,
-      resolution,
-    });
-
-    console.log(`[FFmpeg] Starting for client ${clientId}: ffmpeg ${args.join(' ')}`);
-
-    try {
-      ffmpegProcess = spawn('ffmpeg', args, { stdio: ['pipe', 'pipe', 'pipe'] });
-    } catch (err) {
-      console.error(`[FFmpeg] Failed to spawn for client ${clientId}:`, err.message);
-      send(ws, { type: 'stream_error', message: `Failed to start FFmpeg: ${err.message}` });
-      return;
-    }
-
-    streamActive = true;
-    streamStartTime = Date.now();
-    bytesReceived = 0;
-    sessions.set(clientId, { ffmpegProcess, config, startTime: streamStartTime });
-
-    ffmpegProcess.stderr.on('data', (chunk) => {
-      const line = chunk.toString();
-      // Only forward meaningful lines (not the verbose init flood)
-      if (/frame=|fps=|bitrate=|speed=/.test(line)) {
-        send(ws, { type: 'stream_stats', data: parseFFmpegStats(line) });
-      }
-      if (/Error|error|warning/i.test(line)) {
-        send(ws, { type: 'stream_log', level: 'warn', data: line.trim() });
-      }
-    });
-
-    ffmpegProcess.stdout.on('data', () => {
-      // stdout not used for RTMP/SRT output
-    });
-
-    ffmpegProcess.on('close', (code) => {
-      console.log(`[FFmpeg] Process for client ${clientId} exited with code ${code}`);
-      streamActive = false;
-      ffmpegProcess = null;
-      sessions.delete(clientId);
-      send(ws, { type: 'stream_ended', exitCode: code });
-    });
-
-    ffmpegProcess.on('error', (err) => {
-      console.error(`[FFmpeg] Process error for client ${clientId}:`, err.message);
-      send(ws, { type: 'stream_error', message: err.message });
-      streamActive = false;
-    });
-
-    send(ws, { type: 'stream_started', config });
-  }
-
-  function stopStream() {
-    if (ffmpegProcess) {
-      try {
-        ffmpegProcess.stdin.end();
-      } catch (_) {
-        // ignore
-      }
-      setTimeout(() => {
-        if (ffmpegProcess) {
-          ffmpegProcess.kill('SIGTERM');
-          ffmpegProcess = null;
-        }
-      }, FFMPEG_GRACEFUL_SHUTDOWN_MS);
-      streamActive = false;
-    }
-    if (ws.readyState === WebSocket.OPEN) {
-      send(ws, { type: 'stream_stopped' });
-    }
-  }
-});
-
-// ── FFmpeg helpers ────────────────────────────────────────────────────────────
-
-function buildFFmpegArgs({ outputUrl, outputType, videoBitrate, audioBitrate, framerate }) {
-  const bv = `${videoBitrate}k`;
-  const ba = `${audioBitrate}k`;
-
-  const inputArgs = [
-    '-loglevel', 'warning',
-    '-re',
-    '-f', 'webm',
-    '-i', 'pipe:0',
-  ];
-
-  const videoArgs = [
-    '-c:v', 'libx264',
-    '-preset', 'veryfast',
-    '-tune', 'zerolatency',
-    '-b:v', bv,
-    '-maxrate', bv,
-    '-bufsize', `${videoBitrate * 2}k`,
-    '-pix_fmt', 'yuv420p',
-    '-g', String(framerate * 2),
-    '-r', String(framerate),
-  ];
-
-  const audioArgs = [
-    '-c:a', 'aac',
-    '-b:a', ba,
-    '-ar', '44100',
-    '-ac', '2',
-  ];
-
-  if (outputType === 'srt') {
-    return [...inputArgs, ...videoArgs, ...audioArgs, '-f', 'mpegts', outputUrl];
-  }
-
-  // Default: RTMP (flv)
-  return [...inputArgs, ...videoArgs, ...audioArgs, '-f', 'flv', outputUrl];
 }
 
 function parseFFmpegStats(line) {
@@ -265,26 +483,42 @@ function parseFFmpegStats(line) {
   return stats;
 }
 
-function send(ws, obj) {
-  if (ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify(obj));
+/** Simple deep merge (objects only, arrays replaced) */
+function deepMerge(target, source) {
+  const out = { ...target };
+  for (const key of Object.keys(source)) {
+    if (
+      source[key] !== null &&
+      typeof source[key] === 'object' &&
+      !Array.isArray(source[key]) &&
+      typeof target[key] === 'object' &&
+      !Array.isArray(target[key])
+    ) {
+      out[key] = deepMerge(target[key], source[key]);
+    } else {
+      out[key] = source[key];
+    }
   }
+  return out;
 }
 
-// ── Start server ──────────────────────────────────────────────────────────────
+// ── Start servers ─────────────────────────────────────────────────────────────
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
+nms.run();
+console.log(`    RTMP ingest listening on rtmp://0.0.0.0:${RTMP_PORT}/live/<stream-key>`);
+
+server.listen(HTTP_PORT, () => {
   console.log(`\n🎬  Belabox 2.0 streaming studio`);
-  console.log(`    Running at http://localhost:${PORT}`);
+  console.log(`    Web UI at http://localhost:${HTTP_PORT}`);
+  console.log(`    RTMP ingest at rtmp://YOUR_SERVER_IP:${RTMP_PORT}/live/<stream-key>`);
   console.log(`    FFmpeg available: ${isFFmpegAvailable()}\n`);
 });
 
 // Graceful shutdown
 process.on('SIGTERM', () => {
-  console.log('[Server] Shutting down...');
-  sessions.forEach(({ ffmpegProcess }) => {
-    if (ffmpegProcess) ffmpegProcess.kill('SIGTERM');
-  });
+  console.log('[Server] Shutting down…');
+  if (ffmpegProcess) ffmpegProcess.kill('SIGTERM');
+  nms.stop();
   server.close(() => process.exit(0));
 });
+

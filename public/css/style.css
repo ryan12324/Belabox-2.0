@@ -740,3 +740,74 @@ html, body {
 
 /* ── Utility ───────────────────────────────────────────────────────────────── */
 .hidden { display: none !important; }
+
+/* ── Ingest info panel ─────────────────────────────────────────────────────── */
+.ingest-info {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ingest-url {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: #60a8f0;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 6px;
+  word-break: break-all;
+  user-select: all;
+}
+
+.ingest-active-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.ingest-stream-key {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--success);
+}
+
+.ingest-none {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.ingest-dot {
+  font-size: 11px;
+  margin-right: 2px;
+}
+
+/* ── Modal hint text ───────────────────────────────────────────────────────── */
+.modal-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  background: var(--bg-panel-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  margin-bottom: 12px;
+  line-height: 1.6;
+}
+
+.modal-hint strong,
+.ingest-url-modal {
+  display: block;
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #60a8f0;
+  word-break: break-all;
+}
+
+.modal-hint-sm {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}

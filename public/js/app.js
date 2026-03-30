@@ -3,6 +3,10 @@
  *
  * Bootstraps all modules, wires up UI events, and manages the properties
  * panel so that it reflects the currently selected scene layer.
+ *
+ * Architecture: browser is a pure configurator. All video capture and
+ * compositing runs on the server (FFmpeg). Hardware encoders push RTMP/SRT
+ * to the server's built-in ingest listener.
  */
 
 'use strict';
@@ -13,7 +17,7 @@
   const editor = new SceneEditor();
   const sources = new SourcesManager(editor);
   const overlays = new OverlaysManager(editor);
-  const stream = new StreamController(editor, sources);
+  const stream = new StreamController(editor);
 
   // ── Toolbar / source buttons ──────────────────────────────────────────────
 
@@ -21,8 +25,8 @@
     openModal('modal-add-source');
   });
 
-  document.getElementById('btn-add-camera').addEventListener('click', addCamera);
-  document.getElementById('btn-add-screen').addEventListener('click', addScreen);
+  document.getElementById('btn-add-rtmp').addEventListener('click', () => openModal('modal-add-rtmp'));
+  document.getElementById('btn-add-srt').addEventListener('click', () => openModal('modal-add-srt'));
   document.getElementById('btn-add-text').addEventListener('click', () => overlays.addText());
   document.getElementById('btn-add-image').addEventListener('click', () => openModal('modal-add-image'));
 
@@ -31,16 +35,72 @@
     btn.addEventListener('click', () => {
       const type = btn.dataset.type;
       closeModal('modal-add-source');
-      if (type === 'camera') addCamera();
-      else if (type === 'screen') addScreen();
-      else if (type === 'text') overlays.addText();
+      if (type === 'rtmp')       openModal('modal-add-rtmp');
+      else if (type === 'rtmp_pull') openModal('modal-add-rtmp-pull');
+      else if (type === 'srt')   openModal('modal-add-srt');
+      else if (type === 'text')  overlays.addText();
       else if (type === 'image') openModal('modal-add-image');
     });
   });
 
-  // Add Image modal
+  // ── RTMP Ingest modal ─────────────────────────────────────────────────────
+
+  document.getElementById('btn-confirm-add-rtmp').addEventListener('click', () => {
+    const name = document.getElementById('rtmp-name-input').value.trim() || 'RTMP Source';
+    const key  = document.getElementById('rtmp-key-input').value.trim();
+
+    if (!key) { showToast('Stream key is required', 'error'); return; }
+
+    try {
+      sources.addRtmpSource(name, key);
+      document.getElementById('rtmp-name-input').value = '';
+      document.getElementById('rtmp-key-input').value = '';
+      closeModal('modal-add-rtmp');
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+
+  // ── RTMP Pull modal ───────────────────────────────────────────────────────
+
+  document.getElementById('btn-confirm-add-rtmp-pull').addEventListener('click', () => {
+    const name = document.getElementById('rtmp-pull-name-input').value.trim() || 'RTMP Pull';
+    const url  = document.getElementById('rtmp-pull-url-input').value.trim();
+
+    if (!url) { showToast('RTMP URL is required', 'error'); return; }
+
+    try {
+      sources.addRtmpPullSource(name, url);
+      document.getElementById('rtmp-pull-name-input').value = '';
+      document.getElementById('rtmp-pull-url-input').value = '';
+      closeModal('modal-add-rtmp-pull');
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+
+  // ── SRT modal ─────────────────────────────────────────────────────────────
+
+  document.getElementById('btn-confirm-add-srt').addEventListener('click', () => {
+    const name = document.getElementById('srt-name-input').value.trim() || 'SRT Source';
+    const url  = document.getElementById('srt-url-input').value.trim();
+
+    if (!url) { showToast('SRT URL is required', 'error'); return; }
+
+    try {
+      sources.addSrtSource(name, url);
+      document.getElementById('srt-name-input').value = '';
+      document.getElementById('srt-url-input').value = '';
+      closeModal('modal-add-srt');
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+
+  // ── Add Image modal ───────────────────────────────────────────────────────
+
   document.getElementById('btn-confirm-add-image').addEventListener('click', async () => {
-    const urlInput = document.getElementById('img-url-input');
+    const urlInput  = document.getElementById('img-url-input');
     const fileInput = document.getElementById('img-file-input');
     closeModal('modal-add-image');
 
@@ -59,7 +119,8 @@
     }
   });
 
-  // Layer order buttons
+  // ── Layer order buttons ───────────────────────────────────────────────────
+
   document.getElementById('btn-layer-up').addEventListener('click', () => {
     if (editor.selectedLayer) editor.layerMoveUp(editor.selectedLayer.id);
   });
@@ -67,7 +128,8 @@
     if (editor.selectedLayer) editor.layerMoveDown(editor.selectedLayer.id);
   });
 
-  // Go live / stop button
+  // ── Go live / stop button ─────────────────────────────────────────────────
+
   document.getElementById('btn-go-live').addEventListener('click', () => {
     if (stream.isLive) {
       stream.stopStream();
@@ -76,7 +138,8 @@
     }
   });
 
-  // Modal close buttons
+  // ── Modal close buttons ───────────────────────────────────────────────────
+
   document.querySelectorAll('.modal-close, [data-modal]').forEach(el => {
     el.addEventListener('click', () => {
       const modalId = el.dataset.modal;
@@ -84,16 +147,52 @@
     });
   });
 
-  // Close modal on backdrop click
   document.querySelectorAll('.modal-overlay').forEach(overlay => {
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) closeModal(overlay.id);
     });
   });
 
-  // Resolution / FPS changes
+  // ── Resolution / FPS changes ──────────────────────────────────────────────
+
   document.getElementById('output-resolution').addEventListener('change', (e) => {
     editor.setResolution(e.target.value);
+  });
+
+  // ── Server events (via StreamController WebSocket) ────────────────────────
+
+  document.addEventListener('server-state', (e) => {
+    const msg = e.detail;
+    // Update ingest URL panel
+    if (msg.rtmpIngestPort) {
+      updateIngestPanel(msg.rtmpIngestPort, msg.activeIngestStreams || {});
+    }
+  });
+
+  document.addEventListener('ingest-event', (e) => {
+    const { type, streamKey } = e.detail;
+    if (type === 'ingest_connected') {
+      sources.onIngestConnected(streamKey);
+      // Mark matching layers as active
+      for (const layer of editor.layers) {
+        if (layer._input && layer._input.streamKey === streamKey) {
+          layer._isActive = true;
+        }
+      }
+      showToast(`📡 ${streamKey} connected`, 'success');
+    } else {
+      sources.onIngestDisconnected(streamKey);
+      for (const layer of editor.layers) {
+        if (layer._input && layer._input.streamKey === streamKey) {
+          layer._isActive = false;
+        }
+      }
+      showToast(`📡 ${streamKey} disconnected`, '');
+    }
+    // Refresh status display
+    fetch('/api/status').then(r => r.json()).then(s => {
+      updateIngestPanel(s.rtmpIngestPort, s.activeIngestStreams || {});
+    }).catch(() => {});
   });
 
   // ── Layer events ──────────────────────────────────────────────────────────
@@ -109,9 +208,32 @@
     renderSourceList(editor.layers);
   });
 
-  document.addEventListener('source-ended', (e) => {
-    showToast(`${e.detail.name} stopped sharing`, '');
-  });
+  // ── Ingest panel ──────────────────────────────────────────────────────────
+
+  function updateIngestPanel(port, activeStreams) {
+    const host = location.hostname;
+    const url = `rtmp://${host}:${port}/live/<key>`;
+    document.getElementById('ingest-url').textContent = url;
+
+    // Fill in the RTMP modal hint
+    const hintEl = document.getElementById('modal-ingest-url');
+    if (hintEl) hintEl.textContent = `rtmp://${host}:${port}/live/<key>`;
+
+    const listEl = document.getElementById('ingest-active-list');
+    const keys = Object.keys(activeStreams);
+    if (keys.length === 0) {
+      listEl.innerHTML = '<span class="ingest-none">None connected</span>';
+    } else {
+      listEl.innerHTML = keys.map(k =>
+        `<span class="ingest-stream-key">● ${esc(k)}</span>`
+      ).join('');
+    }
+  }
+
+  // Load initial status
+  fetch('/api/status').then(r => r.json()).then(s => {
+    updateIngestPanel(s.rtmpIngestPort || 1935, s.activeIngestStreams || {});
+  }).catch(() => {});
 
   // ── Source list rendering ─────────────────────────────────────────────────
 
@@ -129,9 +251,11 @@
       li.dataset.id = layer.id;
 
       const icon = typeIcon(layer.type);
+      const isActive = layer._isActive;
       li.innerHTML = `
         <span class="source-icon-sm">${icon}</span>
         <span class="source-name" title="${esc(layer.name)}">${esc(layer.name)}</span>
+        ${(layer.type === 'rtmp' || layer.type === 'srt') ? `<span class="ingest-dot" title="${isActive ? 'Live' : 'Waiting'}">${isActive ? '🟢' : '⚪'}</span>` : ''}
         <button class="vis-toggle${layer.visible ? '' : ' hidden'}" data-id="${layer.id}" title="Toggle visibility">
           ${layer.visible ? '👁' : '🚫'}
         </button>
@@ -223,14 +347,21 @@
       </div>
     `;
 
-    if (layer.type === 'camera') {
+    if (layer.type === 'rtmp' || layer.type === 'srt') {
+      const input = layer._input || {};
+      const isRtmpIngest = layer.type === 'rtmp' && input.type === 'rtmp';
       html += `
         <div class="prop-group">
-          <span class="prop-group-title">Camera Options</span>
-          <label class="prop-label">
-            <input type="checkbox" id="prop-mirror" ${layer.mirror ? 'checked' : ''} />
-            Mirror horizontally
-          </label>
+          <span class="prop-group-title">${layer.type.toUpperCase()} Source</span>
+          ${isRtmpIngest ? `
+            <label class="prop-label">Stream Key</label>
+            <input class="prop-input" type="text" readonly value="${esc(input.streamKey || '')}" />
+            <label class="prop-label">Status</label>
+            <p class="prop-label" style="color:${layer._isActive ? '#2ecc71' : '#888'}">${layer._isActive ? '● Live' : '○ Waiting for stream'}</p>
+          ` : `
+            <label class="prop-label">URL</label>
+            <input class="prop-input" type="text" readonly value="${esc(input.url || '')}" />
+          `}
         </div>
       `;
     }
@@ -319,11 +450,6 @@
       });
     }
 
-    if (layer.type === 'camera') {
-      const mirrorEl = document.getElementById('prop-mirror');
-      if (mirrorEl) mirrorEl.addEventListener('change', () => { layer.mirror = mirrorEl.checked; });
-    }
-
     if (layer.type === 'text') {
       bindPropInput('prop-text', v => { layer.text = v; });
       bindPropNumber('prop-font-size', v => { layer.textStyle.fontSize = v; });
@@ -354,24 +480,8 @@
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
-  async function addCamera() {
-    try {
-      await sources.addCamera();
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  }
-
-  async function addScreen() {
-    try {
-      await sources.addScreen();
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  }
-
   function removeLayer(layer) {
-    if (layer.type === 'camera' || layer.type === 'screen') {
+    if (layer.type === 'rtmp' || layer.type === 'srt') {
       sources.removeSource(layer.id);
     } else {
       overlays.removeOverlay(layer.id);
@@ -399,7 +509,7 @@
   }
 
   function typeIcon(type) {
-    return { camera: '📷', screen: '🖥', text: '📝', image: '🖼' }[type] || '▪';
+    return { rtmp: '📡', srt: '🔗', text: '📝', image: '🖼' }[type] || '▪';
   }
 
   function esc(str) {
@@ -421,7 +531,7 @@
     if (el) el.style.display = 'none';
   }
 
-  // Make showToast global so stream.js can call it
+  // Make showToast available globally so stream.js can call it
   window.showToast = showToast;
 
   function showToast(message, type = '') {
@@ -435,5 +545,5 @@
 
   // ── Initial welcome ───────────────────────────────────────────────────────
 
-  showToast('👋 Belabox 2.0 loaded — click ＋ or toolbar buttons to add sources', '');
+  showToast('👋 Belabox 2.0 — point your hardware encoder at the RTMP ingest URL', '');
 }());

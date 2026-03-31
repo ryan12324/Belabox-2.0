@@ -1,0 +1,19 @@
+{
+  "name": "belabox-2",
+  "version": "2.0.0",
+  "description": "Web-based streaming studio with easy overlays and multi-source support for RTMP/SRT streams",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "node-media-server": "^4.2.4",
+    "ws": "^8.16.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "license": "MIT"
+}

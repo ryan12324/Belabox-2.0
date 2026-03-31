@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Belabox 2.0 — Streaming Studio</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <!-- ── Top Bar ─────────────────────────────────────────────────────────── -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <span class="logo">🎬 Belabox <span class="logo-version">2.0</span></span>
+    </div>
+    <div class="topbar-center">
+      <div class="stream-status" id="stream-status">
+        <span class="status-dot" id="status-dot"></span>
+        <span class="status-text" id="status-text">Offline</span>
+        <span class="status-timer" id="status-timer" style="display:none">00:00:00</span>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span class="conn-indicator" id="conn-indicator" title="Server connection">○</span>
+      <button class="btn btn-stream" id="btn-go-live" disabled>▶ Go Live</button>
+    </div>
+  </header>
+
+  <!-- ── Main Layout ─────────────────────────────────────────────────────── -->
+  <div class="workspace">
+
+    <!-- Left Sidebar: Scenes, Sources & Layers -->
+    <aside class="sidebar sidebar-left">
+      <!-- Scenes -->
+      <section class="panel">
+        <div class="panel-header">
+          <h3>Scenes</h3>
+          <div class="panel-actions">
+            <button class="btn-icon" id="btn-add-scene" title="Add scene">＋</button>
+          </div>
+        </div>
+        <ul class="scene-list" id="scene-list">
+          <li class="scene-item active" data-scene-id="scene-default">
+            <span class="scene-name">Scene 1</span>
+          </li>
+        </ul>
+      </section>
+
+      <!-- Ingest Info -->
+      <section class="panel">
+        <div class="panel-header">
+          <h3>Hardware Ingest</h3>
+        </div>
+        <div class="ingest-info" id="ingest-info">
+          <p class="prop-label">Point your hardware encoder to:</p>
+          <code class="ingest-url" id="ingest-url">rtmp://…:1935/live/&lt;key&gt;</code>
+          <p class="prop-label" style="margin-top:8px">Active ingest streams:</p>
+          <div id="ingest-active-list" class="ingest-active-list">
+            <span class="ingest-none">None connected</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Sources -->
+      <section class="panel">
+        <div class="panel-header">
+          <h3>Sources</h3>
+          <div class="panel-actions">
+            <button class="btn-icon" id="btn-add-source" title="Add source">＋</button>
+          </div>
+        </div>
+        <ul class="source-list" id="source-list">
+          <li class="source-empty">No sources added yet.<br>Click ＋ to add a source.</li>
+        </ul>
+      </section>
+
+      <!-- Layers / scene order -->
+      <section class="panel">
+        <div class="panel-header">
+          <h3>Layers</h3>
+          <div class="panel-actions">
+            <button class="btn-icon" id="btn-layer-up" title="Move up">↑</button>
+            <button class="btn-icon" id="btn-layer-down" title="Move down">↓</button>
+          </div>
+        </div>
+        <ul class="layer-list" id="layer-list">
+          <li class="source-empty">No layers.</li>
+        </ul>
+      </section>
+    </aside>
+
+    <!-- Center: Scene Canvas -->
+    <main class="scene-area">
+      <div class="canvas-wrapper" id="canvas-wrapper">
+        <canvas id="preview-canvas"></canvas>
+        <!-- Inline text editor (hidden until needed) -->
+        <textarea id="inline-text-editor" class="inline-editor" style="display:none"></textarea>
+      </div>
+      <!-- Canvas toolbar -->
+      <div class="canvas-toolbar">
+        <button class="btn-tool" id="tool-select" title="Select / Move" data-active="true">⬛ Select</button>
+        <span class="toolbar-sep">|</span>
+        <button class="btn-tool" id="btn-add-text" title="Add text overlay">T Text</button>
+        <button class="btn-tool" id="btn-add-image" title="Add image overlay">🖼 Image</button>
+        <span class="toolbar-sep">|</span>
+        <button class="btn-tool" id="btn-add-camera" title="Add camera (browser)">📷 Camera</button>
+        <button class="btn-tool" id="btn-add-screen" title="Add screen capture (browser)">🖥 Screen</button>
+        <button class="btn-tool" id="btn-add-mic" title="Add microphone (browser)">🎙 Mic</button>
+        <span class="toolbar-sep">|</span>
+        <button class="btn-tool" id="btn-add-rtmp" title="Add RTMP ingest source">📡 RTMP In</button>
+        <button class="btn-tool" id="btn-add-srt" title="Add SRT source">🔗 SRT In</button>
+        <span class="toolbar-sep flex-spacer"></span>
+        <label class="label-sm">Output:</label>
+        <select class="select-sm" id="output-resolution">
+          <option value="1920x1080">1080p</option>
+          <option value="1280x720" selected>720p</option>
+          <option value="854x480">480p</option>
+        </select>
+        <select class="select-sm" id="output-fps">
+          <option value="60">60 fps</option>
+          <option value="30" selected>30 fps</option>
+          <option value="24">24 fps</option>
+        </select>
+        <span class="toolbar-sep" id="preview-output-sep">|</span>
+        <label class="label-sm" id="preview-output-label">Preview:</label>
+        <select class="select-sm" id="preview-output-select">
+          <option value="">Scene (current resolution)</option>
+        </select>
+      </div>
+    </main>
+
+    <!-- Right Sidebar: Properties -->
+    <aside class="sidebar sidebar-right">
+      <section class="panel" id="properties-panel">
+        <div class="panel-header">
+          <h3>Properties</h3>
+        </div>
+        <div class="properties-content" id="properties-content">
+          <p class="prop-empty">Select a layer to edit its properties.</p>
+        </div>
+      </section>
+
+      <!-- Output Destinations (simulcast) -->
+      <section class="panel" id="outputs-panel">
+        <div class="panel-header">
+          <h3>Output Destinations</h3>
+          <div class="panel-actions">
+            <button class="btn-icon" id="btn-add-output" title="Add destination">＋</button>
+          </div>
+        </div>
+        <div id="output-destinations-list"></div>
+
+        <div class="stream-stats" id="stream-stats" style="display:none">
+          <div class="stat-row"><span>Frame</span><span id="stat-frame">—</span></div>
+          <div class="stat-row"><span>FPS</span><span id="stat-fps">—</span></div>
+          <div class="stat-row"><span>Bitrate</span><span id="stat-bitrate">—</span></div>
+        </div>
+      </section>
+    </aside>
+  </div>
+
+  <!-- ── Modals ──────────────────────────────────────────────────────────── -->
+
+  <!-- Add Source Modal -->
+  <div class="modal-overlay" id="modal-add-source" style="display:none">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Add Source</h2>
+        <button class="modal-close" data-modal="modal-add-source">✕</button>
+      </div>
+      <div class="modal-body source-picker">
+        <p class="source-picker-heading">Browser Sources</p>
+        <button class="source-type-btn" data-type="camera">
+          <span class="source-icon">📷</span>
+          <span class="source-label">Camera</span>
+          <span class="source-desc">Capture from webcam with audio, streamed to server</span>
+        </button>
+        <button class="source-type-btn" data-type="screen">
+          <span class="source-icon">🖥</span>
+          <span class="source-label">Screen Capture</span>
+          <span class="source-desc">Capture a window or your entire screen</span>
+        </button>
+        <button class="source-type-btn" data-type="microphone">
+          <span class="source-icon">🎙</span>
+          <span class="source-label">Microphone</span>
+          <span class="source-desc">Audio-only browser input mixed into the stream</span>
+        </button>
+        <p class="source-picker-heading">Hardware Sources</p>
+        <button class="source-type-btn" data-type="rtmp">
+          <span class="source-icon">📡</span>
+          <span class="source-label">RTMP Ingest</span>
+          <span class="source-desc">Hardware encoder pushes RTMP to Belabox server</span>
+        </button>
+        <button class="source-type-btn" data-type="rtmp_pull">
+          <span class="source-icon">⬇</span>
+          <span class="source-label">RTMP Pull</span>
+          <span class="source-desc">Server pulls from an external RTMP stream URL</span>
+        </button>
+        <button class="source-type-btn" data-type="srt">
+          <span class="source-icon">🔗</span>
+          <span class="source-label">SRT Input</span>
+          <span class="source-desc">Connect to a hardware encoder via SRT protocol</span>
+        </button>
+        <p class="source-picker-heading">Overlays</p>
+        <button class="source-type-btn" data-type="text">
+          <span class="source-icon">T</span>
+          <span class="source-label">Text Overlay</span>
+          <span class="source-desc">Add a text overlay composited by FFmpeg</span>
+        </button>
+        <button class="source-type-btn" data-type="image">
+          <span class="source-icon">🖼</span>
+          <span class="source-label">Image / Logo</span>
+          <span class="source-desc">Add an image overlay (e.g. logo, watermark)</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add RTMP Ingest Modal -->
+  <div class="modal-overlay" id="modal-add-rtmp" style="display:none">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2>📡 Add RTMP Ingest</h2>
+        <button class="modal-close" data-modal="modal-add-rtmp">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-hint">
+          Point your hardware encoder (camera, encoder box, OBS, etc.) to:<br>
+          <strong id="modal-ingest-url" class="ingest-url-modal">rtmp://…:1935/live/&lt;key&gt;</strong>
+        </p>
+        <label class="prop-label">Source Name</label>
+        <input class="prop-input" type="text" id="rtmp-name-input" placeholder="Camera 1" />
+        <label class="prop-label">Stream Key</label>
+        <input class="prop-input" type="text" id="rtmp-key-input" placeholder="camera1" />
+        <p class="modal-hint-sm">Use the same key in your hardware encoder settings.</p>
+        <div class="modal-actions">
+          <button class="btn btn-primary" id="btn-confirm-add-rtmp">Add Source</button>
+          <button class="btn" data-modal="modal-add-rtmp">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add RTMP Pull Modal -->
+  <div class="modal-overlay" id="modal-add-rtmp-pull" style="display:none">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2>⬇ Add RTMP Pull</h2>
+        <button class="modal-close" data-modal="modal-add-rtmp-pull">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="prop-label">Source Name</label>
+        <input class="prop-input" type="text" id="rtmp-pull-name-input" placeholder="Remote Camera" />
+        <label class="prop-label">RTMP URL</label>
+        <input class="prop-input" type="text" id="rtmp-pull-url-input" placeholder="rtmp://192.168.1.100/live/stream" />
+        <div class="modal-actions">
+          <button class="btn btn-primary" id="btn-confirm-add-rtmp-pull">Add Source</button>
+          <button class="btn" data-modal="modal-add-rtmp-pull">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add SRT Modal -->
+  <div class="modal-overlay" id="modal-add-srt" style="display:none">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2>🔗 Add SRT Input</h2>
+        <button class="modal-close" data-modal="modal-add-srt">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="prop-label">Source Name</label>
+        <input class="prop-input" type="text" id="srt-name-input" placeholder="SRT Camera" />
+        <label class="prop-label">SRT URL</label>
+        <input class="prop-input" type="text" id="srt-url-input" placeholder="srt://192.168.1.100:4000" />
+        <div class="modal-actions">
+          <button class="btn btn-primary" id="btn-confirm-add-srt">Add Source</button>
+          <button class="btn" data-modal="modal-add-srt">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Image Source Modal -->
+  <div class="modal-overlay" id="modal-add-image" style="display:none">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2>Add Image</h2>
+        <button class="modal-close" data-modal="modal-add-image">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="prop-label">Image URL</label>
+        <input class="prop-input" type="text" id="img-url-input" placeholder="https://example.com/logo.png" />
+        <div class="modal-divider">— or —</div>
+        <label class="prop-label">Upload File</label>
+        <input class="prop-input" type="file" id="img-file-input" accept="image/*" />
+        <div class="modal-actions">
+          <button class="btn btn-primary" id="btn-confirm-add-image">Add Image</button>
+          <button class="btn" data-modal="modal-add-image">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- New Scene Modal -->
+  <div class="modal-overlay" id="modal-add-scene" style="display:none">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2>New Scene</h2>
+        <button class="modal-close" data-modal="modal-add-scene">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="prop-label">Scene Name</label>
+        <input class="prop-input" type="text" id="new-scene-name" placeholder="Low Bitrate" />
+        <p class="modal-hint-sm">Each scene has independent layers, resolution, and output settings.</p>
+        <div class="modal-actions">
+          <button class="btn btn-primary" id="btn-confirm-add-scene">Create Scene</button>
+          <button class="btn" data-modal="modal-add-scene">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Output Destination Modal -->
+  <div class="modal-overlay" id="modal-add-output" style="display:none">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2>Add Output Destination</h2>
+        <button class="modal-close" data-modal="modal-add-output">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="prop-label" style="margin-bottom:8px">Platform presets</p>
+        <div class="platform-presets">
+          <button class="preset-btn" data-preset="twitch">
+            <span class="preset-icon">📺</span> Twitch
+          </button>
+          <button class="preset-btn" data-preset="youtube">
+            <span class="preset-icon">▶</span> YouTube
+          </button>
+          <button class="preset-btn" data-preset="tiktok">
+            <span class="preset-icon">🎵</span> TikTok
+          </button>
+          <button class="preset-btn" data-preset="facebook">
+            <span class="preset-icon">📘</span> Facebook
+          </button>
+          <button class="preset-btn" data-preset="custom">
+            <span class="preset-icon">⚙</span> Custom
+          </button>
+        </div>
+        <p id="output-preset-hint" style="display:none"></p>
+        <label class="prop-label">Destination Name</label>
+        <input class="prop-input" type="text" id="new-output-name" placeholder="Twitch" />
+
+        <label class="prop-label">Protocol</label>
+        <select class="prop-input" id="new-output-protocol">
+          <option value="rtmp">RTMP</option>
+          <option value="srt">SRT</option>
+        </select>
+
+        <label class="prop-label">Stream URL</label>
+        <input class="prop-input" type="text" id="new-output-url"
+          placeholder="rtmp://live.twitch.tv/app" />
+
+        <label class="prop-label">Stream Key</label>
+        <input class="prop-input" type="password" id="new-output-key"
+          placeholder="your-stream-key" />
+
+        <label class="prop-label">Video Bitrate (kbps)</label>
+        <input class="prop-input" type="number" id="new-output-vbitrate"
+          value="3000" min="500" max="50000" step="500" />
+
+        <label class="prop-label">Audio Bitrate (kbps)</label>
+        <select class="prop-input" id="new-output-abitrate">
+          <option value="128" selected>128</option>
+          <option value="192">192</option>
+          <option value="256">256</option>
+          <option value="320">320</option>
+        </select>
+
+        <label class="prop-label">Resolution Override</label>
+        <select class="prop-input" id="new-output-resolution">
+          <option value="" selected>— Use scene resolution —</option>
+          <option value="1920x1080">1920×1080 (1080p landscape)</option>
+          <option value="1280x720">1280×720 (720p landscape)</option>
+          <option value="854x480">854×480 (480p landscape)</option>
+          <option value="1080x1920">1080×1920 (vertical – TikTok/Reels)</option>
+          <option value="720x1280">720×1280 (vertical HD)</option>
+        </select>
+
+        <div class="modal-actions">
+          <button class="btn btn-primary" id="btn-confirm-add-output">Add Destination</button>
+          <button class="btn" data-modal="modal-add-output">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Notification toast -->
+  <div class="toast" id="toast" style="display:none"></div>
+
+  <!-- JS modules -->
+  <script src="js/scene-editor.js"></script>
+  <script src="js/scenes.js"></script>
+  <script src="js/outputs.js"></script>
+  <script src="js/sources.js"></script>
+  <script src="js/overlays.js"></script>
+  <script src="js/stream.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
+

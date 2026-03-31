@@ -11,6 +11,7 @@
   --bg-panel-alt: #2d2d2d;
   --bg-input: #3c3c3c;
   --bg-hover: #383838;
+  --bg-selected: #1e2a38;
   --border: #404040;
   --border-light: #555;
 
@@ -810,4 +811,66 @@ html, body {
   font-size: 11px;
   color: var(--text-dim);
   margin-top: 4px;
+}
+
+/* ── Scene switcher ────────────────────────────────────────────────────────── */
+.scene-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.scene-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  transition: background 0.1s;
+}
+
+.scene-item:hover {
+  background: var(--bg-hover);
+}
+
+.scene-item.active {
+  border-left-color: var(--accent);
+  background: var(--bg-selected);
+}
+
+.scene-name {
+  flex: 1;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scene-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.scene-item:hover .scene-actions,
+.scene-item.active .scene-actions {
+  opacity: 1;
+}
+
+.scene-switch-btn {
+  color: var(--accent) !important;
+}
+
+/* ── Source picker headings ─────────────────────────────────────────────────── */
+.source-picker-heading {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  padding: 8px 0 4px;
+  margin: 0;
+  border-bottom: 1px solid var(--border);
 }

@@ -155,6 +155,29 @@ class SceneEditor {
     const { x, y, width, height } = layer;
 
     switch (layer.type) {
+      case 'camera':
+      case 'screen':
+        // Browser source: render the real video element if available
+        if (layer.videoEl && layer.videoEl.readyState >= 2) {
+          if (layer.mirror) {
+            ctx.save();
+            ctx.scale(-1, 1);
+            ctx.drawImage(layer.videoEl, -(x + width), y, width, height);
+            ctx.restore();
+          } else {
+            ctx.drawImage(layer.videoEl, x, y, width, height);
+          }
+          // Small "BROWSER" badge so user knows it's a local capture
+          this._drawBrowserBadge(ctx, x, y, width);
+        } else {
+          this._drawBrowserSourcePlaceholder(ctx, layer);
+        }
+        break;
+
+      case 'microphone':
+        this._drawMicrophonePlaceholder(ctx, layer);
+        break;
+
       case 'rtmp':
       case 'srt':
         this._drawVideoSourcePlaceholder(ctx, layer);
@@ -183,27 +206,67 @@ class SceneEditor {
     }
   }
 
+  /** Small overlay badge to indicate a live browser capture in the preview */
+  _drawBrowserBadge(ctx, x, y, width) {
+    const label = '● BROWSER';
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    const tw = ctx.measureText(label).width;
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(x + 4, y + 4, tw + 8, 16);
+    ctx.fillStyle = '#2ecc71';
+    ctx.fillText(label, x + 8, y + 6);
+  }
+
+  /** Placeholder shown while camera/screen is initialising */
+  _drawBrowserSourcePlaceholder(ctx, layer) {
+    const { x, y, width, height } = layer;
+    const icon = layer.type === 'camera' ? '📷' : '🖥';
+    ctx.fillStyle = '#111';
+    ctx.fillRect(x, y, width, height);
+    ctx.fillStyle = '#555';
+    ctx.font = `${Math.min(28, height / 5)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`${icon} Starting…`, x + width / 2, y + height / 2);
+  }
+
+  /** Placeholder for an audio-only microphone source */
+  _drawMicrophonePlaceholder(ctx, layer) {
+    const { x, y, width, height } = layer;
+    ctx.fillStyle = '#0d0d1a';
+    ctx.fillRect(x, y, width, height);
+    ctx.strokeStyle = '#444';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 1, y + 1, width - 2, height - 2);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `${Math.min(28, height / 4)}px sans-serif`;
+    ctx.fillStyle = '#888';
+    ctx.fillText('🎙', x + width / 2, y + height / 2 - 10);
+    ctx.font = `bold ${Math.min(12, height / 8)}px sans-serif`;
+    ctx.fillStyle = '#666';
+    ctx.fillText(layer.name || 'Microphone', x + width / 2, y + height / 2 + 16);
+  }
+
   /**
-   * Draw a placeholder for a server-side video source.
-   * The actual compositing is done by FFmpeg on the server; this shows
-   * the user the layout and which streams are actively ingesting.
+   * Draw a placeholder for a server-side hardware video source (RTMP/SRT).
+   * Shows live/waiting status and stream key hint.
    */
   _drawVideoSourcePlaceholder(ctx, layer) {
     const { x, y, width, height } = layer;
     const isActive = layer._isActive; // set by app.js based on ingest events
     const isRtmp = layer.type === 'rtmp';
 
-    // Dark background tinted by stream type
     const bg = isRtmp ? '#0a1a0a' : '#0a0a1a';
     ctx.fillStyle = bg;
     ctx.fillRect(x, y, width, height);
 
-    // Border: green if live, grey if waiting
     ctx.strokeStyle = isActive ? '#2ecc71' : '#444';
     ctx.lineWidth = 2;
     ctx.strokeRect(x + 1, y + 1, width - 2, height - 2);
 
-    // Status indicator dot
     const dotR = Math.min(8, width / 20);
     const dotX = x + width - dotR - 8;
     const dotY = y + dotR + 8;

@@ -18,7 +18,6 @@ class StreamController {
     this._timerInterval = null;
     this._startTime = null;
 
-    this._wsUrl = `ws://${location.host}`;
     this._connect();
   }
 
@@ -26,7 +25,9 @@ class StreamController {
 
   _connect() {
     try {
-      this._ws = new WebSocket(this._wsUrl);
+      // Use explicit /ws path (the server also has /ws/source for binary source streams)
+      const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      this._ws = new WebSocket(`${wsProto}//${location.host}/ws`);
 
       this._ws.onopen = () => {
         console.log('[WS] Connected to server');
@@ -80,11 +81,10 @@ class StreamController {
         // Restore live state if server was already streaming
         if (msg.streamActive) {
           this._isLive = true;
-          // Set startTime before _setLiveUI so the timer starts from the correct time
           if (msg.streamStartTime) this._startTime = msg.streamStartTime;
           this._setLiveUI(true);
         }
-        // Let app.js know about ingest state
+        // Let app.js know about full server state (scenes, inputs, ingest)
         document.dispatchEvent(new CustomEvent('server-state', { detail: msg }));
         break;
 
@@ -116,6 +116,24 @@ class StreamController {
       case 'ingest_disconnected':
         // Forward to app.js for layer status updates
         document.dispatchEvent(new CustomEvent('ingest-event', { detail: msg }));
+        break;
+
+      case 'scene_activated':
+        // Scene was switched on the server; notify app.js to refresh UI
+        document.dispatchEvent(new CustomEvent('scene-activated', { detail: msg }));
+        break;
+
+      case 'scenes_updated':
+        document.dispatchEvent(new CustomEvent('scenes-updated', { detail: msg }));
+        break;
+
+      case 'inputs_updated':
+        document.dispatchEvent(new CustomEvent('inputs-updated', { detail: msg }));
+        break;
+
+      case 'browser_source_connected':
+      case 'browser_source_disconnected':
+        document.dispatchEvent(new CustomEvent('browser-source-event', { detail: msg }));
         break;
 
       case 'scene_updated':
@@ -165,7 +183,7 @@ class StreamController {
   /**
    * Push the current browser-side scene layout to the server.
    * Reads output settings from the UI, combines with the layer list from
-   * the scene editor, and POSTs the full config to /api/scene.
+   * the scene editor, and PUTs the active scene to /api/scenes/:id.
    */
   async _syncSceneToServer() {
     const url = document.getElementById('stream-url').value.trim();
@@ -188,35 +206,36 @@ class StreamController {
       height: Math.round(l.height),
       visible: l.visible,
       opacity: l.opacity,
-      // Text overlay properties
       text: l.text,
       textStyle: l.textStyle,
-      // Image overlay URL
       imgUrl: l.imgUrl,
     }));
 
-    // Pull current inputs from server (sources.js has already registered them)
-    let inputs = [];
-    try {
-      const r = await fetch('/api/scene');
-      const cfg = await r.json();
-      inputs = cfg.inputs || [];
-    } catch (_) {}
+    // Get active scene ID from SceneManager (injected via window)
+    const sceneManager = window._sceneManager;
+    const activeSceneId = sceneManager ? sceneManager.activeSceneId : null;
 
-    const scene = {
+    const sceneData = {
       resolution,
       framerate,
-      inputs,
       layers,
       output: { protocol, url, key, videoBitrate: vbitrate, audioBitrate: abitrate },
     };
 
     try {
-      await fetch('/api/scene', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(scene),
-      });
+      if (activeSceneId) {
+        await fetch(`/api/scenes/${activeSceneId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(sceneData),
+        });
+      } else {
+        await fetch('/api/scene', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(sceneData),
+        });
+      }
     } catch (err) {
       console.error('[Stream] Failed to sync scene:', err.message);
     }

@@ -4,9 +4,10 @@
  * Bootstraps all modules, wires up UI events, and manages the properties
  * panel so that it reflects the currently selected scene layer.
  *
- * Architecture: browser is a pure configurator. All video capture and
- * compositing runs on the server (FFmpeg). Hardware encoders push RTMP/SRT
- * to the server's built-in ingest listener.
+ * Supports:
+ *  - Server-side hardware RTMP/SRT ingest (composited by FFmpeg)
+ *  - Browser sources: camera, screen capture, microphone (streamed to server)
+ *  - Multi-scene switching (each scene = independent layout + output settings)
  */
 
 'use strict';
@@ -15,9 +16,13 @@
   // ── Initialise modules ────────────────────────────────────────────────────
 
   const editor = new SceneEditor();
+  const sceneManager = new SceneManager(editor);
   const sources = new SourcesManager(editor);
   const overlays = new OverlaysManager(editor);
   const stream = new StreamController(editor);
+
+  // Expose sceneManager globally so stream.js can read activeSceneId
+  window._sceneManager = sceneManager;
 
   // ── Toolbar / source buttons ──────────────────────────────────────────────
 
@@ -25,6 +30,9 @@
     openModal('modal-add-source');
   });
 
+  document.getElementById('btn-add-camera').addEventListener('click', () => addCamera());
+  document.getElementById('btn-add-screen').addEventListener('click', () => addScreen());
+  document.getElementById('btn-add-mic').addEventListener('click', () => addMicrophone());
   document.getElementById('btn-add-rtmp').addEventListener('click', () => openModal('modal-add-rtmp'));
   document.getElementById('btn-add-srt').addEventListener('click', () => openModal('modal-add-srt'));
   document.getElementById('btn-add-text').addEventListener('click', () => overlays.addText());
@@ -35,22 +43,51 @@
     btn.addEventListener('click', () => {
       const type = btn.dataset.type;
       closeModal('modal-add-source');
-      if (type === 'rtmp')       openModal('modal-add-rtmp');
-      else if (type === 'rtmp_pull') openModal('modal-add-rtmp-pull');
-      else if (type === 'srt')   openModal('modal-add-srt');
-      else if (type === 'text')  overlays.addText();
-      else if (type === 'image') openModal('modal-add-image');
+      switch (type) {
+        case 'camera':     addCamera();             break;
+        case 'screen':     addScreen();             break;
+        case 'microphone': addMicrophone();         break;
+        case 'rtmp':       openModal('modal-add-rtmp'); break;
+        case 'rtmp_pull':  openModal('modal-add-rtmp-pull'); break;
+        case 'srt':        openModal('modal-add-srt'); break;
+        case 'text':       overlays.addText();      break;
+        case 'image':      openModal('modal-add-image'); break;
+      }
     });
   });
+
+  // ── Browser source helpers ────────────────────────────────────────────────
+
+  async function addCamera() {
+    try {
+      await sources.addCamera();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  }
+
+  async function addScreen() {
+    try {
+      await sources.addScreen();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  }
+
+  async function addMicrophone() {
+    try {
+      await sources.addMicrophone();
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  }
 
   // ── RTMP Ingest modal ─────────────────────────────────────────────────────
 
   document.getElementById('btn-confirm-add-rtmp').addEventListener('click', () => {
     const name = document.getElementById('rtmp-name-input').value.trim() || 'RTMP Source';
     const key  = document.getElementById('rtmp-key-input').value.trim();
-
     if (!key) { showToast('Stream key is required', 'error'); return; }
-
     try {
       sources.addRtmpSource(name, key);
       document.getElementById('rtmp-name-input').value = '';
@@ -66,9 +103,7 @@
   document.getElementById('btn-confirm-add-rtmp-pull').addEventListener('click', () => {
     const name = document.getElementById('rtmp-pull-name-input').value.trim() || 'RTMP Pull';
     const url  = document.getElementById('rtmp-pull-url-input').value.trim();
-
     if (!url) { showToast('RTMP URL is required', 'error'); return; }
-
     try {
       sources.addRtmpPullSource(name, url);
       document.getElementById('rtmp-pull-name-input').value = '';
@@ -84,9 +119,7 @@
   document.getElementById('btn-confirm-add-srt').addEventListener('click', () => {
     const name = document.getElementById('srt-name-input').value.trim() || 'SRT Source';
     const url  = document.getElementById('srt-url-input').value.trim();
-
     if (!url) { showToast('SRT URL is required', 'error'); return; }
-
     try {
       sources.addSrtSource(name, url);
       document.getElementById('srt-name-input').value = '';
@@ -103,7 +136,6 @@
     const urlInput  = document.getElementById('img-url-input');
     const fileInput = document.getElementById('img-file-input');
     closeModal('modal-add-image');
-
     try {
       if (fileInput.files && fileInput.files[0]) {
         await overlays.addImageFromFile(fileInput.files[0]);
@@ -114,6 +146,24 @@
       } else {
         showToast('Please provide an image URL or file', 'error');
       }
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+
+  // ── Scenes ────────────────────────────────────────────────────────────────
+
+  document.getElementById('btn-add-scene').addEventListener('click', () => {
+    openModal('modal-add-scene');
+  });
+
+  document.getElementById('btn-confirm-add-scene').addEventListener('click', async () => {
+    const name = document.getElementById('new-scene-name').value.trim();
+    try {
+      await sceneManager.createScene(name);
+      document.getElementById('new-scene-name').value = '';
+      closeModal('modal-add-scene');
+      renderSceneList();
     } catch (err) {
       showToast(err.message, 'error');
     }
@@ -131,11 +181,8 @@
   // ── Go live / stop button ─────────────────────────────────────────────────
 
   document.getElementById('btn-go-live').addEventListener('click', () => {
-    if (stream.isLive) {
-      stream.stopStream();
-    } else {
-      stream.startStream();
-    }
+    if (stream.isLive) stream.stopStream();
+    else stream.startStream();
   });
 
   // ── Modal close buttons ───────────────────────────────────────────────────
@@ -146,7 +193,6 @@
       if (modalId) closeModal(modalId);
     });
   });
-
   document.querySelectorAll('.modal-overlay').forEach(overlay => {
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) closeModal(overlay.id);
@@ -159,40 +205,64 @@
     editor.setResolution(e.target.value);
   });
 
-  // ── Server events (via StreamController WebSocket) ────────────────────────
+  document.addEventListener('resolution-changed', (e) => {
+    editor.setResolution(e.detail);
+  });
+
+  // ── Server events ─────────────────────────────────────────────────────────
 
   document.addEventListener('server-state', (e) => {
     const msg = e.detail;
-    // Update ingest URL panel
+    // Load scenes from server
+    if (msg.scenes) {
+      sceneManager.loadFromServerState(msg);
+      renderSceneList();
+    }
+    // Ingest panel
     if (msg.rtmpIngestPort) {
       updateIngestPanel(msg.rtmpIngestPort, msg.activeIngestStreams || {});
     }
+  });
+
+  document.addEventListener('scenes-updated', (e) => {
+    const { scenes, activeSceneId } = e.detail;
+    sceneManager.onScenesUpdated(scenes, activeSceneId);
+    renderSceneList();
+  });
+
+  document.addEventListener('scene-switched', () => {
+    renderSceneList();
+  });
+
+  document.addEventListener('scene-activated', (e) => {
+    const { sceneId } = e.detail;
+    sceneManager.onScenesUpdated(sceneManager.scenes, sceneId);
+    renderSceneList();
+    showToast(`🎬 Switched to ${(sceneManager.activeScene && sceneManager.activeScene.name) || sceneId}`, '');
   });
 
   document.addEventListener('ingest-event', (e) => {
     const { type, streamKey } = e.detail;
     if (type === 'ingest_connected') {
       sources.onIngestConnected(streamKey);
-      // Mark matching layers as active
       for (const layer of editor.layers) {
-        if (layer._input && layer._input.streamKey === streamKey) {
-          layer._isActive = true;
-        }
+        if (layer._input && layer._input.streamKey === streamKey) layer._isActive = true;
       }
       showToast(`📡 ${streamKey} connected`, 'success');
     } else {
       sources.onIngestDisconnected(streamKey);
       for (const layer of editor.layers) {
-        if (layer._input && layer._input.streamKey === streamKey) {
-          layer._isActive = false;
-        }
+        if (layer._input && layer._input.streamKey === streamKey) layer._isActive = false;
       }
       showToast(`📡 ${streamKey} disconnected`, '');
     }
-    // Refresh status display
     fetch('/api/status').then(r => r.json()).then(s => {
       updateIngestPanel(s.rtmpIngestPort, s.activeIngestStreams || {});
     }).catch(() => {});
+  });
+
+  document.addEventListener('source-ended', (e) => {
+    showToast(`${e.detail.name} stopped sharing`, '');
   });
 
   // ── Layer events ──────────────────────────────────────────────────────────
@@ -214,26 +284,52 @@
     const host = location.hostname;
     const url = `rtmp://${host}:${port}/live/<key>`;
     document.getElementById('ingest-url').textContent = url;
-
-    // Fill in the RTMP modal hint
     const hintEl = document.getElementById('modal-ingest-url');
     if (hintEl) hintEl.textContent = `rtmp://${host}:${port}/live/<key>`;
-
     const listEl = document.getElementById('ingest-active-list');
     const keys = Object.keys(activeStreams);
     if (keys.length === 0) {
       listEl.innerHTML = '<span class="ingest-none">None connected</span>';
     } else {
-      listEl.innerHTML = keys.map(k =>
-        `<span class="ingest-stream-key">● ${esc(k)}</span>`
-      ).join('');
+      listEl.innerHTML = keys.map(k => `<span class="ingest-stream-key">● ${esc(k)}</span>`).join('');
     }
   }
 
-  // Load initial status
   fetch('/api/status').then(r => r.json()).then(s => {
     updateIngestPanel(s.rtmpIngestPort || 1935, s.activeIngestStreams || {});
   }).catch(() => {});
+
+  // ── Scene list rendering ──────────────────────────────────────────────────
+
+  function renderSceneList() {
+    const ul = document.getElementById('scene-list');
+    const scenes = sceneManager.scenes;
+    const activeId = sceneManager.activeSceneId;
+    ul.innerHTML = '';
+    for (const scene of scenes) {
+      const li = document.createElement('li');
+      li.className = `scene-item${scene.id === activeId ? ' active' : ''}`;
+      li.dataset.sceneId = scene.id;
+      li.innerHTML = `
+        <span class="scene-name" title="${esc(scene.name)}">${esc(scene.name)}</span>
+        <div class="scene-actions">
+          <button class="btn-icon scene-switch-btn" data-id="${scene.id}" title="Switch to scene">${scene.id === activeId ? '●' : '○'}</button>
+          <button class="btn-icon scene-del-btn" data-id="${scene.id}" title="Delete scene">✕</button>
+        </div>
+      `;
+      li.querySelector('.scene-switch-btn').addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await sceneManager.switchScene(scene.id);
+      });
+      li.querySelector('.scene-del-btn').addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (scenes.length <= 1) { showToast('Cannot delete the last scene', 'error'); return; }
+        try { await sceneManager.deleteScene(scene.id); renderSceneList(); } catch (err) { showToast(err.message, 'error'); }
+      });
+      li.addEventListener('click', () => sceneManager.switchScene(scene.id));
+      ul.appendChild(li);
+    }
+  }
 
   // ── Source list rendering ─────────────────────────────────────────────────
 
@@ -243,19 +339,18 @@
       ul.innerHTML = '<li class="source-empty">No sources added yet.<br>Click ＋ to add a source.</li>';
       return;
     }
-
     ul.innerHTML = '';
     for (const layer of [...layers].reverse()) {
       const li = document.createElement('li');
       li.className = `source-item${editor.selectedLayer && editor.selectedLayer.id === layer.id ? ' selected' : ''}`;
       li.dataset.id = layer.id;
-
       const icon = typeIcon(layer.type);
+      const isHardwareSource = layer.type === 'rtmp' || layer.type === 'srt';
       const isActive = layer._isActive;
       li.innerHTML = `
         <span class="source-icon-sm">${icon}</span>
         <span class="source-name" title="${esc(layer.name)}">${esc(layer.name)}</span>
-        ${(layer.type === 'rtmp' || layer.type === 'srt') ? `<span class="ingest-dot" title="${isActive ? 'Live' : 'Waiting'}">${isActive ? '🟢' : '⚪'}</span>` : ''}
+        ${isHardwareSource ? `<span class="ingest-dot" title="${isActive ? 'Live' : 'Waiting'}">${isActive ? '🟢' : '⚪'}</span>` : ''}
         <button class="vis-toggle${layer.visible ? '' : ' hidden'}" data-id="${layer.id}" title="Toggle visibility">
           ${layer.visible ? '👁' : '🚫'}
         </button>
@@ -263,22 +358,18 @@
           <button class="btn-icon" data-action="delete" data-id="${layer.id}" title="Remove">✕</button>
         </div>
       `;
-
       li.addEventListener('click', (e) => {
         if (e.target.closest('[data-action]') || e.target.closest('.vis-toggle')) return;
         editor.selectLayer(layer);
       });
-
       li.querySelector('.vis-toggle').addEventListener('click', (e) => {
         e.stopPropagation();
         editor.toggleVisibility(layer.id);
       });
-
       li.querySelector('[data-action="delete"]').addEventListener('click', (e) => {
         e.stopPropagation();
         removeLayer(layer);
       });
-
       ul.appendChild(li);
     }
   }
@@ -291,7 +382,6 @@
       ul.innerHTML = '<li class="source-empty">No layers.</li>';
       return;
     }
-
     ul.innerHTML = '';
     for (let i = layers.length - 1; i >= 0; i--) {
       const layer = layers[i];
@@ -319,33 +409,29 @@
     let html = `
       <label class="prop-label">Name</label>
       <input class="prop-input" id="prop-name" type="text" value="${esc(layer.name)}" />
-
       <div class="prop-group">
         <span class="prop-group-title">Transform</span>
         <div class="prop-row">
-          <div>
-            <label class="prop-label">X</label>
-            <input class="prop-input" id="prop-x" type="number" value="${Math.round(layer.x)}" step="1" />
-          </div>
-          <div>
-            <label class="prop-label">Y</label>
-            <input class="prop-input" id="prop-y" type="number" value="${Math.round(layer.y)}" step="1" />
-          </div>
+          <div><label class="prop-label">X</label><input class="prop-input" id="prop-x" type="number" value="${Math.round(layer.x)}" step="1" /></div>
+          <div><label class="prop-label">Y</label><input class="prop-input" id="prop-y" type="number" value="${Math.round(layer.y)}" step="1" /></div>
         </div>
         <div class="prop-row">
-          <div>
-            <label class="prop-label">Width</label>
-            <input class="prop-input" id="prop-w" type="number" value="${Math.round(layer.width)}" min="20" step="1" />
-          </div>
-          <div>
-            <label class="prop-label">Height</label>
-            <input class="prop-input" id="prop-h" type="number" value="${Math.round(layer.height)}" min="20" step="1" />
-          </div>
+          <div><label class="prop-label">Width</label><input class="prop-input" id="prop-w" type="number" value="${Math.round(layer.width)}" min="20" step="1" /></div>
+          <div><label class="prop-label">Height</label><input class="prop-input" id="prop-h" type="number" value="${Math.round(layer.height)}" min="20" step="1" /></div>
         </div>
         <label class="prop-label">Opacity: <span id="prop-opacity-val">${Math.round(layer.opacity * 100)}%</span></label>
         <input class="prop-input" id="prop-opacity" type="range" min="0" max="1" step="0.01" value="${layer.opacity}" />
       </div>
     `;
+
+    if (layer.type === 'camera') {
+      html += `
+        <div class="prop-group">
+          <span class="prop-group-title">Camera Options</span>
+          <label class="prop-label"><input type="checkbox" id="prop-mirror" ${layer.mirror ? 'checked' : ''} /> Mirror horizontally</label>
+        </div>
+      `;
+    }
 
     if (layer.type === 'rtmp' || layer.type === 'srt') {
       const input = layer._input || {};
@@ -356,7 +442,6 @@
           ${isRtmpIngest ? `
             <label class="prop-label">Stream Key</label>
             <input class="prop-input" type="text" readonly value="${esc(input.streamKey || '')}" />
-            <label class="prop-label">Status</label>
             <p class="prop-label" style="color:${layer._isActive ? '#2ecc71' : '#888'}">${layer._isActive ? '● Live' : '○ Waiting for stream'}</p>
           ` : `
             <label class="prop-label">URL</label>
@@ -373,7 +458,6 @@
           <span class="prop-group-title">Text</span>
           <label class="prop-label">Content (double-click on canvas to edit inline)</label>
           <textarea class="prop-input" id="prop-text" rows="3" style="resize:vertical">${esc(layer.text || '')}</textarea>
-
           <div class="prop-row">
             <div>
               <label class="prop-label">Font</label>
@@ -388,12 +472,8 @@
               <input class="prop-input" id="prop-font-size" type="number" value="${s.fontSize || 36}" min="8" max="200" />
             </div>
           </div>
-
           <div class="prop-row">
-            <div>
-              <label class="prop-label">Text Color</label>
-              <input class="prop-input" id="prop-text-color" type="color" value="${s.color || '#ffffff'}" />
-            </div>
+            <div><label class="prop-label">Text Color</label><input class="prop-input" id="prop-text-color" type="color" value="${s.color || '#ffffff'}" /></div>
             <div>
               <label class="prop-label">Alignment</label>
               <select class="prop-input" id="prop-text-align">
@@ -403,38 +483,20 @@
               </select>
             </div>
           </div>
-
           <div class="prop-row">
-            <div>
-              <label class="prop-label">
-                <input type="checkbox" id="prop-bold" ${s.bold ? 'checked' : ''} /> Bold
-              </label>
-            </div>
-            <div>
-              <label class="prop-label">
-                <input type="checkbox" id="prop-italic" ${s.italic ? 'checked' : ''} /> Italic
-              </label>
-            </div>
+            <div><label class="prop-label"><input type="checkbox" id="prop-bold" ${s.bold ? 'checked' : ''} /> Bold</label></div>
+            <div><label class="prop-label"><input type="checkbox" id="prop-italic" ${s.italic ? 'checked' : ''} /> Italic</label></div>
           </div>
-
           <label class="prop-label">Background Color</label>
           <input class="prop-input" id="prop-bg-color" type="color" value="${s.bgColor || '#000000'}" />
-
           <label class="prop-label">Background Opacity: <span id="prop-bg-opacity-val">${Math.round((s.bgOpacity !== undefined ? s.bgOpacity : 0.5) * 100)}%</span></label>
           <input class="prop-input" id="prop-bg-opacity" type="range" min="0" max="1" step="0.01" value="${s.bgOpacity !== undefined ? s.bgOpacity : 0.5}" />
         </div>
       `;
     }
 
-    html += `
-      <button class="btn" id="prop-delete" style="margin-top:8px;border-color:#c0392b;color:#e74c3c;width:100%">
-        ✕ Remove Layer
-      </button>
-    `;
-
+    html += `<button class="btn" id="prop-delete" style="margin-top:8px;border-color:#c0392b;color:#e74c3c;width:100%">✕ Remove Layer</button>`;
     container.innerHTML = html;
-
-    // ── Wire up change handlers ───────────────────────────────────────────
 
     bindPropInput('prop-name', v => { layer.name = v; fireLayersChanged(); });
     bindPropNumber('prop-x', v => { layer.x = v; });
@@ -450,38 +512,39 @@
       });
     }
 
+    if (layer.type === 'camera') {
+      const mirrorEl = document.getElementById('prop-mirror');
+      if (mirrorEl) mirrorEl.addEventListener('change', () => { layer.mirror = mirrorEl.checked; });
+    }
+
     if (layer.type === 'text') {
       bindPropInput('prop-text', v => { layer.text = v; });
       bindPropNumber('prop-font-size', v => { layer.textStyle.fontSize = v; });
       bindPropInput('prop-font-family', v => { layer.textStyle.fontFamily = v; });
       bindPropInput('prop-text-color', v => { layer.textStyle.color = v; });
       bindPropInput('prop-text-align', v => { layer.textStyle.align = v; });
-
       const boldEl = document.getElementById('prop-bold');
       if (boldEl) boldEl.addEventListener('change', () => { layer.textStyle.bold = boldEl.checked; });
       const italicEl = document.getElementById('prop-italic');
       if (italicEl) italicEl.addEventListener('change', () => { layer.textStyle.italic = italicEl.checked; });
       bindPropInput('prop-bg-color', v => { layer.textStyle.bgColor = v; });
-
       const bgOpEl = document.getElementById('prop-bg-opacity');
       if (bgOpEl) {
         bgOpEl.addEventListener('input', () => {
           layer.textStyle.bgOpacity = parseFloat(bgOpEl.value);
-          document.getElementById('prop-bg-opacity-val').textContent =
-            `${Math.round(layer.textStyle.bgOpacity * 100)}%`;
+          document.getElementById('prop-bg-opacity-val').textContent = `${Math.round(layer.textStyle.bgOpacity * 100)}%`;
         });
       }
     }
 
-    document.getElementById('prop-delete').addEventListener('click', () => {
-      removeLayer(layer);
-    });
+    document.getElementById('prop-delete').addEventListener('click', () => removeLayer(layer));
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   function removeLayer(layer) {
-    if (layer.type === 'rtmp' || layer.type === 'srt') {
+    if (layer.type === 'rtmp' || layer.type === 'srt' ||
+        layer.type === 'camera' || layer.type === 'screen' || layer.type === 'microphone') {
       sources.removeSource(layer.id);
     } else {
       overlays.removeOverlay(layer.id);
@@ -498,10 +561,7 @@
   function bindPropNumber(id, setter) {
     const el = document.getElementById(id);
     if (!el) return;
-    el.addEventListener('input', () => {
-      const v = parseFloat(el.value);
-      if (!isNaN(v)) setter(v);
-    });
+    el.addEventListener('input', () => { const v = parseFloat(el.value); if (!isNaN(v)) setter(v); });
   }
 
   function fireLayersChanged() {
@@ -509,16 +569,13 @@
   }
 
   function typeIcon(type) {
-    return { rtmp: '📡', srt: '🔗', text: '📝', image: '🖼' }[type] || '▪';
+    return { camera: '📷', screen: '🖥', microphone: '🎙', rtmp: '📡', srt: '🔗', text: '📝', image: '🖼' }[type] || '▪';
   }
 
   function esc(str) {
     return String(str)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;');
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
   function openModal(id) {
@@ -531,9 +588,7 @@
     if (el) el.style.display = 'none';
   }
 
-  // Make showToast available globally so stream.js can call it
   window.showToast = showToast;
-
   function showToast(message, type = '') {
     const toast = document.getElementById('toast');
     toast.textContent = message;
@@ -543,7 +598,5 @@
     showToast._timer = setTimeout(() => { toast.style.display = 'none'; }, 3500);
   }
 
-  // ── Initial welcome ───────────────────────────────────────────────────────
-
-  showToast('👋 Belabox 2.0 — point your hardware encoder at the RTMP ingest URL', '');
+  showToast('👋 Belabox 2.0 — ready', '');
 }());

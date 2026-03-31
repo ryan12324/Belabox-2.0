@@ -28,8 +28,23 @@
   <!-- ── Main Layout ─────────────────────────────────────────────────────── -->
   <div class="workspace">
 
-    <!-- Left Sidebar: Sources & Layers -->
+    <!-- Left Sidebar: Scenes, Sources & Layers -->
     <aside class="sidebar sidebar-left">
+      <!-- Scenes -->
+      <section class="panel">
+        <div class="panel-header">
+          <h3>Scenes</h3>
+          <div class="panel-actions">
+            <button class="btn-icon" id="btn-add-scene" title="Add scene">＋</button>
+          </div>
+        </div>
+        <ul class="scene-list" id="scene-list">
+          <li class="scene-item active" data-scene-id="scene-default">
+            <span class="scene-name">Scene 1</span>
+          </li>
+        </ul>
+      </section>
+
       <!-- Ingest Info -->
       <section class="panel">
         <div class="panel-header">
@@ -86,6 +101,10 @@
         <span class="toolbar-sep">|</span>
         <button class="btn-tool" id="btn-add-text" title="Add text overlay">T Text</button>
         <button class="btn-tool" id="btn-add-image" title="Add image overlay">🖼 Image</button>
+        <span class="toolbar-sep">|</span>
+        <button class="btn-tool" id="btn-add-camera" title="Add camera (browser)">📷 Camera</button>
+        <button class="btn-tool" id="btn-add-screen" title="Add screen capture (browser)">🖥 Screen</button>
+        <button class="btn-tool" id="btn-add-mic" title="Add microphone (browser)">🎙 Mic</button>
         <span class="toolbar-sep">|</span>
         <button class="btn-tool" id="btn-add-rtmp" title="Add RTMP ingest source">📡 RTMP In</button>
         <button class="btn-tool" id="btn-add-srt" title="Add SRT source">🔗 SRT In</button>
@@ -163,10 +182,27 @@
   <div class="modal-overlay" id="modal-add-source" style="display:none">
     <div class="modal">
       <div class="modal-header">
-        <h2>Add Hardware Source</h2>
+        <h2>Add Source</h2>
         <button class="modal-close" data-modal="modal-add-source">✕</button>
       </div>
       <div class="modal-body source-picker">
+        <p class="source-picker-heading">Browser Sources</p>
+        <button class="source-type-btn" data-type="camera">
+          <span class="source-icon">📷</span>
+          <span class="source-label">Camera</span>
+          <span class="source-desc">Capture from webcam with audio, streamed to server</span>
+        </button>
+        <button class="source-type-btn" data-type="screen">
+          <span class="source-icon">🖥</span>
+          <span class="source-label">Screen Capture</span>
+          <span class="source-desc">Capture a window or your entire screen</span>
+        </button>
+        <button class="source-type-btn" data-type="microphone">
+          <span class="source-icon">🎙</span>
+          <span class="source-label">Microphone</span>
+          <span class="source-desc">Audio-only browser input mixed into the stream</span>
+        </button>
+        <p class="source-picker-heading">Hardware Sources</p>
         <button class="source-type-btn" data-type="rtmp">
           <span class="source-icon">📡</span>
           <span class="source-label">RTMP Ingest</span>
@@ -182,6 +218,7 @@
           <span class="source-label">SRT Input</span>
           <span class="source-desc">Connect to a hardware encoder via SRT protocol</span>
         </button>
+        <p class="source-picker-heading">Overlays</p>
         <button class="source-type-btn" data-type="text">
           <span class="source-icon">T</span>
           <span class="source-label">Text Overlay</span>
@@ -282,11 +319,31 @@
     </div>
   </div>
 
+  <!-- New Scene Modal -->
+  <div class="modal-overlay" id="modal-add-scene" style="display:none">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2>New Scene</h2>
+        <button class="modal-close" data-modal="modal-add-scene">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="prop-label">Scene Name</label>
+        <input class="prop-input" type="text" id="new-scene-name" placeholder="Low Bitrate" />
+        <p class="modal-hint-sm">Each scene has independent layers, resolution, and output settings.</p>
+        <div class="modal-actions">
+          <button class="btn btn-primary" id="btn-confirm-add-scene">Create Scene</button>
+          <button class="btn" data-modal="modal-add-scene">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Notification toast -->
   <div class="toast" id="toast" style="display:none"></div>
 
   <!-- JS modules -->
   <script src="js/scene-editor.js"></script>
+  <script src="js/scenes.js"></script>
   <script src="js/sources.js"></script>
   <script src="js/overlays.js"></script>
   <script src="js/stream.js"></script>

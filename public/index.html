@@ -21,6 +21,7 @@
     </div>
     <div class="topbar-right">
       <span class="conn-indicator" id="conn-indicator" title="Server connection">○</span>
+      <button class="btn btn-icon-topbar" id="btn-settings" title="Settings">⚙</button>
       <button class="btn btn-stream" id="btn-go-live" disabled>▶ Go Live</button>
     </div>
   </header>
@@ -105,6 +106,7 @@
         <button class="btn-tool" id="btn-add-camera" title="Add camera (browser)">📷 Camera</button>
         <button class="btn-tool" id="btn-add-screen" title="Add screen capture (browser)">🖥 Screen</button>
         <button class="btn-tool" id="btn-add-mic" title="Add microphone (browser)">🎙 Mic</button>
+        <button class="btn-tool" id="btn-add-browser-url" title="Add browser source (URL)">🌐 Browser</button>
         <span class="toolbar-sep">|</span>
         <button class="btn-tool" id="btn-add-rtmp" title="Add RTMP ingest source">📡 RTMP In</button>
         <button class="btn-tool" id="btn-add-srt" title="Add SRT source">🔗 SRT In</button>
@@ -183,6 +185,11 @@
           <span class="source-icon">🎙</span>
           <span class="source-label">Microphone</span>
           <span class="source-desc">Audio-only browser input mixed into the stream</span>
+        </button>
+        <button class="source-type-btn" data-type="browser_url">
+          <span class="source-icon">🌐</span>
+          <span class="source-label">Browser Source (URL)</span>
+          <span class="source-desc">Render a web page URL as an overlay (StreamElements, alerts, HTML overlays)</span>
         </button>
         <p class="source-picker-heading">Hardware Sources</p>
         <button class="source-type-btn" data-type="rtmp">
@@ -389,6 +396,75 @@
         <div class="modal-actions">
           <button class="btn btn-primary" id="btn-confirm-add-output">Add Destination</button>
           <button class="btn" data-modal="modal-add-output">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Browser URL Source Modal -->
+  <div class="modal-overlay" id="modal-add-browser-url" style="display:none">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2>🌐 Add Browser Source</h2>
+        <button class="modal-close" data-modal="modal-add-browser-url">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-hint">
+          Renders a web page as an overlay. Great for StreamElements widgets, Streamlabs alerts, custom HTML overlays, and more.
+        </p>
+        <label class="prop-label">Source Name</label>
+        <input class="prop-input" type="text" id="browser-url-name-input" placeholder="Stream Alerts" />
+        <label class="prop-label">URL</label>
+        <input class="prop-input" type="url" id="browser-url-url-input" placeholder="https://streamelements.com/overlay/…" />
+        <div class="prop-row" style="margin-top:4px">
+          <div>
+            <label class="prop-label">Width (px)</label>
+            <input class="prop-input" type="number" id="browser-url-width-input" placeholder="1280" min="100" />
+          </div>
+          <div>
+            <label class="prop-label">Height (px)</label>
+            <input class="prop-input" type="number" id="browser-url-height-input" placeholder="720" min="100" />
+          </div>
+        </div>
+        <p class="modal-hint-sm">Leave width/height blank to fill the full scene. The overlay is previewed live in the editor as an iframe.</p>
+        <div class="modal-actions">
+          <button class="btn btn-primary" id="btn-confirm-add-browser-url">Add Source</button>
+          <button class="btn" data-modal="modal-add-browser-url">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div class="modal-overlay" id="modal-settings" style="display:none">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2>⚙ Settings</h2>
+        <button class="modal-close" data-modal="modal-settings">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="source-picker-heading">Authentication</p>
+        <label class="prop-label">
+          <input type="checkbox" id="settings-auth-enabled" />
+          &nbsp;Enable username / password protection
+        </label>
+        <p class="modal-hint-sm" style="margin-bottom:10px">When enabled, a login page is shown before anyone can access the studio. Restart is not required.</p>
+
+        <label class="prop-label">Username</label>
+        <input class="prop-input" type="text" id="settings-username" placeholder="admin" autocomplete="username" />
+
+        <label class="prop-label">New Password</label>
+        <input class="prop-input" type="password" id="settings-password" placeholder="Leave blank to keep current" autocomplete="new-password" />
+
+        <label class="prop-label">Confirm New Password</label>
+        <input class="prop-input" type="password" id="settings-password-confirm" placeholder="Re-enter new password" autocomplete="new-password" />
+
+        <label class="prop-label" id="settings-current-pw-label" style="display:none">Current Password (required to save changes)</label>
+        <input class="prop-input" type="password" id="settings-current-password" placeholder="Current password" autocomplete="current-password" style="display:none" />
+
+        <div class="modal-actions">
+          <button class="btn btn-primary" id="btn-confirm-settings">Save Settings</button>
+          <button class="btn" data-modal="modal-settings">Cancel</button>
         </div>
       </div>
     </div>

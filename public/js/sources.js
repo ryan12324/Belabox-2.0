@@ -36,6 +36,16 @@ class SourcesManager {
      * @type {Map<string, {ws:WebSocket, recorder:MediaRecorder, stream:MediaStream, layer:object}>}
      */
     this._browserSources = new Map();
+    /**
+     * Browser URL overlay iframes.
+     * @type {Map<string, HTMLIFrameElement>}
+     */
+    this._browserUrlIframes = new Map();
+
+    // Keep iframes in sync with layer transforms
+    document.addEventListener('layers-changed', () => this._syncIframes());
+    document.addEventListener('selection-changed', () => this._syncIframes());
+    window.addEventListener('resize', () => this._syncIframes());
   }
 
   // ── Hardware RTMP ingest source ───────────────────────────────────────────
@@ -227,6 +237,107 @@ class SourcesManager {
     return layer;
   }
 
+  // ── Browser URL source ────────────────────────────────────────────────────
+
+  /**
+   * Add a browser-URL source: renders the given URL in an iframe overlay
+   * positioned over the preview canvas. The iframe tracks the layer's position,
+   * size and visibility in real time.
+   *
+   * @param {string} name  Display name
+   * @param {string} url   URL to load in the iframe
+   * @param {object} opts  Optional { width, height }
+   * @returns {object} the scene layer
+   */
+  addBrowserUrl(name, url, opts = {}) {
+    if (!url) throw new Error('URL is required for a Browser Source');
+
+    const ow = this._editor.outputCanvas.width;
+    const oh = this._editor.outputCanvas.height;
+
+    const layer = createLayer('browser_url', {
+      name: name || 'Browser Source',
+      url,
+      x: 0,
+      y: 0,
+      width: opts.width || ow,
+      height: opts.height || oh,
+    });
+
+    this._editor.addLayer(layer);
+    this._createBrowserUrlIframe(layer);
+    return layer;
+  }
+
+  _createBrowserUrlIframe(layer) {
+    const wrapper = document.getElementById('canvas-wrapper');
+    if (!wrapper) return;
+
+    const iframe = document.createElement('iframe');
+    iframe.className = 'browser-source-iframe';
+
+    // Validate URL scheme to prevent javascript: / data: injection
+    try {
+      const parsed = new URL(layer.url);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        // Use the canonicalized href from the parsed URL object, not the raw input
+        iframe.src = parsed.href;
+      } else {
+        console.warn('[BrowserSource] Blocked non-http(s) URL:', parsed.protocol);
+        iframe.src = 'about:blank';
+      }
+    } catch (_) {
+      iframe.src = 'about:blank';
+    }
+
+    iframe.setAttribute('allow', 'autoplay; encrypted-media');
+    iframe.setAttribute('allowfullscreen', '');
+    wrapper.appendChild(iframe);
+
+    this._browserUrlIframes.set(layer.id, iframe);
+    this._positionIframe(layer, iframe);
+  }
+
+  _positionIframe(layer, iframe) {
+    const preview = document.getElementById('preview-canvas');
+    if (!preview) return;
+
+    const previewRect = preview.getBoundingClientRect();
+    const wrapperRect = document.getElementById('canvas-wrapper').getBoundingClientRect();
+
+    const outW = this._editor.outputCanvas.width;
+    const outH = this._editor.outputCanvas.height;
+    const preW = preview.width;
+    const preH = preview.height;
+
+    // Offset of preview canvas inside wrapper (centred by padding)
+    const offX = previewRect.left - wrapperRect.left;
+    const offY = previewRect.top - wrapperRect.top;
+
+    const scaleX = preW / outW;
+    const scaleY = preH / outH;
+
+    iframe.style.left   = `${offX + layer.x * scaleX}px`;
+    iframe.style.top    = `${offY + layer.y * scaleY}px`;
+    iframe.style.width  = `${layer.width * scaleX}px`;
+    iframe.style.height = `${layer.height * scaleY}px`;
+    iframe.style.display = layer.visible ? 'block' : 'none';
+    iframe.style.opacity = String(layer.opacity !== undefined ? layer.opacity : 1);
+  }
+
+  _syncIframes() {
+    for (const [layerId, iframe] of this._browserUrlIframes) {
+      const layer = this._editor.layers.find(l => l.id === layerId);
+      if (layer) {
+        this._positionIframe(layer, iframe);
+      } else {
+        // Layer was removed externally
+        iframe.remove();
+        this._browserUrlIframes.delete(layerId);
+      }
+    }
+  }
+
   // ── Remove source ─────────────────────────────────────────────────────────
 
   removeSource(layerId) {
@@ -247,6 +358,13 @@ class SourcesManager {
           this._browserSources.delete(rawId);
         }
       }
+    }
+
+    // Remove browser URL iframe
+    const iframe = this._browserUrlIframes.get(layerId);
+    if (iframe) {
+      iframe.remove();
+      this._browserUrlIframes.delete(layerId);
     }
 
     this._editor.removeLayer(layerId);

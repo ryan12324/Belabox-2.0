@@ -8,9 +8,14 @@ const { createRtmpServer } = require('./src/rtmp-ingest');
 const router = require('./src/routes/index');
 const { isFFmpegAvailable } = require('./src/utils');
 const { HTTP_PORT, RTMP_PORT } = require('./src/constants');
+const { authMiddleware } = require('./src/auth');
 
 const app = express();
 app.use(express.json());
+
+// Auth middleware runs before static files so the whole UI is protected
+app.use(authMiddleware);
+
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/api', router);
 

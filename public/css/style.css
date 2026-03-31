@@ -998,3 +998,30 @@ html, body {
   border-radius: 4px;
   border-left: 3px solid var(--accent);
 }
+
+/* ── Browser Source iframe overlay ──────────────────────────────────────────── */
+.browser-source-iframe {
+  position: absolute;
+  border: none;
+  pointer-events: none; /* Don't intercept canvas drag/resize interactions */
+  background: transparent;
+  z-index: 10;
+}
+
+/* ── Settings / topbar icon button ──────────────────────────────────────────── */
+.btn-icon-topbar {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: var(--radius);
+  padding: 4px 10px;
+  font-size: 14px;
+  cursor: pointer;
+  margin-right: 8px;
+  transition: background 0.12s, color 0.12s;
+}
+
+.btn-icon-topbar:hover {
+  background: var(--bg-hover);
+  color: var(--text-bright);
+}

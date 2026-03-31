@@ -96,6 +96,7 @@ class OutputManager {
     if (!Array.isArray(outputs) || outputs.length === 0) return;
     this._outputs = outputs;
     this._renderList();
+    this._syncPreviewSelect();
   }
 
   // ── Add from preset ───────────────────────────────────────────────────────
@@ -171,6 +172,7 @@ class OutputManager {
 
     if (this._outputs.length === 0) {
       container.innerHTML = '<p class="prop-empty" style="padding:10px">No output destinations. Click ＋ to add one.</p>';
+      this._syncPreviewSelect();
       return;
     }
 
@@ -279,10 +281,52 @@ class OutputManager {
       };
 
       div.querySelectorAll('.dest-url, .dest-key').forEach(el => el.addEventListener('input', sync));
-      div.querySelectorAll('.dest-vbr, .dest-abr, .dest-res, .dest-proto').forEach(el => el.addEventListener('change', sync));
+      div.querySelectorAll('.dest-vbr, .dest-abr, .dest-res, .dest-proto').forEach(el => el.addEventListener('change', () => {
+        sync();
+        this._syncPreviewSelect();
+      }));
 
       container.appendChild(div);
     }
+    this._syncPreviewSelect();
+  }
+
+  // ── Sync preview dropdown ─────────────────────────────────────────────────
+
+  _syncPreviewSelect() {
+    const sel = document.getElementById('preview-output-select');
+    if (!sel) return;
+
+    const currentVal = sel.value;
+    sel.innerHTML = '';
+
+    const defaultOpt = document.createElement('option');
+    defaultOpt.value = '';
+    defaultOpt.textContent = 'Scene (current resolution)';
+    sel.appendChild(defaultOpt);
+
+    const verticalOutputs = this._outputs.filter(o => o.resolution);
+    for (const o of verticalOutputs) {
+      const opt = document.createElement('option');
+      opt.value = o.resolution;
+      opt.textContent = `${o.name} (${o.resolution.replace('x', '×')})`;
+      sel.appendChild(opt);
+    }
+
+    // Restore previous selection if still available, else fall back to default
+    const stillAvailable = Array.from(sel.options).some(opt => opt.value === currentVal);
+    sel.value = stillAvailable ? currentVal : '';
+    if (!stillAvailable && currentVal !== '') {
+      // Previously-selected output was removed — reset canvas to scene resolution
+      sel.dispatchEvent(new Event('change'));
+    }
+
+    // Show/hide the preview controls depending on whether there are vertical outputs
+    const hidden = verticalOutputs.length === 0;
+    ['preview-output-sep', 'preview-output-label', 'preview-output-select'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = hidden ? 'none' : '';
+    });
   }
 }
 

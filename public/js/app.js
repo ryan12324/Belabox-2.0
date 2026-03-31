@@ -29,6 +29,7 @@
 
   // Initial render of output list
   outputManager._renderList();
+  outputManager._syncPreviewSelect();
 
   // ── Output destinations ───────────────────────────────────────────────────
 
@@ -242,6 +243,14 @@
 
   document.getElementById('output-resolution').addEventListener('change', (e) => {
     editor.setResolution(e.target.value);
+    // Reset preview dropdown to scene when scene resolution changes
+    const previewSel = document.getElementById('preview-output-select');
+    if (previewSel) previewSel.value = '';
+  });
+
+  document.getElementById('preview-output-select').addEventListener('change', (e) => {
+    const res = e.target.value || document.getElementById('output-resolution').value || '1280x720';
+    editor.setResolution(res);
   });
 
   document.addEventListener('resolution-changed', (e) => {

@@ -456,6 +456,13 @@ html, body {
   cursor: pointer;
 }
 
+/* Preview output selector — hidden by default, shown when vertical outputs exist */
+#preview-output-sep,
+#preview-output-label,
+#preview-output-select {
+  display: none;
+}
+
 /* ── Properties Panel ─────────────────────────────────────────────────────── */
 .properties-content {
   padding: 12px;

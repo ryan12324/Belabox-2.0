@@ -134,43 +134,20 @@
         </div>
       </section>
 
-      <!-- Stream Settings -->
-      <section class="panel">
+      <!-- Output Destinations (simulcast) -->
+      <section class="panel" id="outputs-panel">
         <div class="panel-header">
-          <h3>Stream Settings</h3>
-        </div>
-        <div class="stream-settings">
-          <label class="prop-label">Output Protocol</label>
-          <select class="prop-input" id="stream-protocol">
-            <option value="rtmp">RTMP</option>
-            <option value="srt">SRT</option>
-          </select>
-
-          <label class="prop-label">Stream URL</label>
-          <input class="prop-input" type="text" id="stream-url"
-            placeholder="rtmp://live.twitch.tv/app" />
-
-          <label class="prop-label">Stream Key</label>
-          <input class="prop-input" type="password" id="stream-key"
-            placeholder="your-stream-key" />
-
-          <label class="prop-label">Video Bitrate (kbps)</label>
-          <input class="prop-input" type="number" id="stream-vbitrate"
-            value="3000" min="500" max="15000" step="500" />
-
-          <label class="prop-label">Audio Bitrate (kbps)</label>
-          <select class="prop-input" id="stream-abitrate">
-            <option value="128" selected>128</option>
-            <option value="192">192</option>
-            <option value="256">256</option>
-            <option value="320">320</option>
-          </select>
-
-          <div class="stream-stats" id="stream-stats" style="display:none">
-            <div class="stat-row"><span>Frame</span><span id="stat-frame">—</span></div>
-            <div class="stat-row"><span>FPS</span><span id="stat-fps">—</span></div>
-            <div class="stat-row"><span>Bitrate</span><span id="stat-bitrate">—</span></div>
+          <h3>Output Destinations</h3>
+          <div class="panel-actions">
+            <button class="btn-icon" id="btn-add-output" title="Add destination">＋</button>
           </div>
+        </div>
+        <div id="output-destinations-list"></div>
+
+        <div class="stream-stats" id="stream-stats" style="display:none">
+          <div class="stat-row"><span>Frame</span><span id="stat-frame">—</span></div>
+          <div class="stat-row"><span>FPS</span><span id="stat-fps">—</span></div>
+          <div class="stat-row"><span>Bitrate</span><span id="stat-bitrate">—</span></div>
         </div>
       </section>
     </aside>
@@ -338,12 +315,87 @@
     </div>
   </div>
 
+  <!-- Add Output Destination Modal -->
+  <div class="modal-overlay" id="modal-add-output" style="display:none">
+    <div class="modal modal-sm">
+      <div class="modal-header">
+        <h2>Add Output Destination</h2>
+        <button class="modal-close" data-modal="modal-add-output">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="prop-label" style="margin-bottom:8px">Platform presets</p>
+        <div class="platform-presets">
+          <button class="preset-btn" data-preset="twitch">
+            <span class="preset-icon">📺</span> Twitch
+          </button>
+          <button class="preset-btn" data-preset="youtube">
+            <span class="preset-icon">▶</span> YouTube
+          </button>
+          <button class="preset-btn" data-preset="tiktok">
+            <span class="preset-icon">🎵</span> TikTok
+          </button>
+          <button class="preset-btn" data-preset="facebook">
+            <span class="preset-icon">📘</span> Facebook
+          </button>
+          <button class="preset-btn" data-preset="custom">
+            <span class="preset-icon">⚙</span> Custom
+          </button>
+        </div>
+        <p id="output-preset-hint" style="display:none"></p>
+        <label class="prop-label">Destination Name</label>
+        <input class="prop-input" type="text" id="new-output-name" placeholder="Twitch" />
+
+        <label class="prop-label">Protocol</label>
+        <select class="prop-input" id="new-output-protocol">
+          <option value="rtmp">RTMP</option>
+          <option value="srt">SRT</option>
+        </select>
+
+        <label class="prop-label">Stream URL</label>
+        <input class="prop-input" type="text" id="new-output-url"
+          placeholder="rtmp://live.twitch.tv/app" />
+
+        <label class="prop-label">Stream Key</label>
+        <input class="prop-input" type="password" id="new-output-key"
+          placeholder="your-stream-key" />
+
+        <label class="prop-label">Video Bitrate (kbps)</label>
+        <input class="prop-input" type="number" id="new-output-vbitrate"
+          value="3000" min="500" max="50000" step="500" />
+
+        <label class="prop-label">Audio Bitrate (kbps)</label>
+        <select class="prop-input" id="new-output-abitrate">
+          <option value="128" selected>128</option>
+          <option value="192">192</option>
+          <option value="256">256</option>
+          <option value="320">320</option>
+        </select>
+
+        <label class="prop-label">Resolution Override</label>
+        <select class="prop-input" id="new-output-resolution">
+          <option value="" selected>— Use scene resolution —</option>
+          <option value="1920x1080">1920×1080 (1080p landscape)</option>
+          <option value="1280x720">1280×720 (720p landscape)</option>
+          <option value="854x480">854×480 (480p landscape)</option>
+          <option value="1080x1920">1080×1920 (vertical – TikTok/Reels)</option>
+          <option value="720x1280">720×1280 (vertical HD)</option>
+        </select>
+
+        <div class="modal-actions">
+          <button class="btn btn-primary" id="btn-confirm-add-output">Add Destination</button>
+          <button class="btn" data-modal="modal-add-output">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Notification toast -->
   <div class="toast" id="toast" style="display:none"></div>
 
   <!-- JS modules -->
   <script src="js/scene-editor.js"></script>
   <script src="js/scenes.js"></script>
+  <script src="js/outputs.js"></script>
   <script src="js/sources.js"></script>
   <script src="js/overlays.js"></script>
   <script src="js/stream.js"></script>

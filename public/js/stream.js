@@ -182,15 +182,10 @@ class StreamController {
 
   /**
    * Push the current browser-side scene layout to the server.
-   * Reads output settings from the UI, combines with the layer list from
-   * the scene editor, and PUTs the active scene to /api/scenes/:id.
+   * Reads resolution/framerate from the UI, gets outputs[] from OutputManager,
+   * combines with the layer list from the scene editor, and PUTs the active scene.
    */
   async _syncSceneToServer() {
-    const url = document.getElementById('stream-url').value.trim();
-    const key = document.getElementById('stream-key').value.trim();
-    const protocol = document.getElementById('stream-protocol').value;
-    const vbitrate = parseInt(document.getElementById('stream-vbitrate').value, 10) || 3000;
-    const abitrate = parseInt(document.getElementById('stream-abitrate').value, 10) || 128;
     const resolution = document.getElementById('output-resolution').value || '1280x720';
     const framerate = parseInt(document.getElementById('output-fps').value, 10) || 30;
 
@@ -211,16 +206,14 @@ class StreamController {
       imgUrl: l.imgUrl,
     }));
 
+    // Get output destinations from OutputManager (injected via window)
+    const outputs = window._outputManager ? window._outputManager.outputs : [];
+
     // Get active scene ID from SceneManager (injected via window)
     const sceneManager = window._sceneManager;
     const activeSceneId = sceneManager ? sceneManager.activeSceneId : null;
 
-    const sceneData = {
-      resolution,
-      framerate,
-      layers,
-      output: { protocol, url, key, videoBitrate: vbitrate, audioBitrate: abitrate },
-    };
+    const sceneData = { resolution, framerate, layers, outputs };
 
     try {
       if (activeSceneId) {

@@ -67,7 +67,19 @@ let scenes = [
     resolution: '1280x720',
     framerate: 30,
     layers: [],
-    output: { protocol: 'rtmp', url: '', key: '', videoBitrate: 3000, audioBitrate: 128 },
+    outputs: [
+      {
+        id: 'out-default',
+        name: 'Stream',
+        enabled: true,
+        protocol: 'rtmp',
+        url: '',
+        key: '',
+        videoBitrate: 3000,
+        audioBitrate: 128,
+        resolution: null, // null = use scene resolution
+      },
+    ],
   },
 ];
 let activeSceneId = 'scene-default';
@@ -147,7 +159,19 @@ app.post('/api/scenes', (req, res) => {
     resolution: '1280x720',
     framerate: 30,
     layers: [],
-    output: { protocol: 'rtmp', url: '', key: '', videoBitrate: 3000, audioBitrate: 128 },
+    outputs: [
+      {
+        id: `out-${Date.now()}`,
+        name: 'Stream',
+        enabled: true,
+        protocol: 'rtmp',
+        url: '',
+        key: '',
+        videoBitrate: 3000,
+        audioBitrate: 128,
+        resolution: null,
+      },
+    ],
   };
   scenes.push(newScene);
   broadcast({ type: 'scenes_updated', scenes, activeSceneId });
@@ -230,16 +254,33 @@ app.post('/api/stream/stop', (_req, res) => {
 
 // ── FFmpeg compositor ─────────────────────────────────────────────────────────
 
+/**
+ * Return the enabled output destinations for a scene.
+ * Handles both the new `outputs[]` array and the legacy `output` single-object form.
+ * @param {object} scene
+ * @returns {Array<{id,name,enabled,protocol,url,key,videoBitrate,audioBitrate,resolution}>}
+ */
+function normalizeOutputs(scene) {
+  if (Array.isArray(scene.outputs)) {
+    return scene.outputs.filter(o => o.enabled && o.url);
+  }
+  if (scene.output && scene.output.url) {
+    return [{ ...scene.output, id: 'legacy', enabled: true, resolution: null }];
+  }
+  return [];
+}
+
 function startCompositor() {
   const scene = scenes.find(s => s.id === activeSceneId) || scenes[0];
-  const { resolution, framerate, layers, output } = scene;
+  const { resolution, framerate, layers } = scene;
 
-  if (!output || !output.url) return 'No output URL configured';
+  // Support both `outputs[]` (new) and legacy `output` (single)
+  const allOutputs = normalizeOutputs(scene);
+
+  if (allOutputs.length === 0) return 'No output destinations configured (enable at least one and set its URL)';
 
   const [outW, outH] = (resolution || '1280x720').split('x').map(Number);
   const fps = framerate || 30;
-  const vBitrate = `${output.videoBitrate || 3000}k`;
-  const aBitrate = `${output.audioBitrate || 128}k`;
 
   // Collect video layers that reference a known input
   const videoLayers = (layers || []).filter(
@@ -319,26 +360,90 @@ function startCompositor() {
     lastVideoTag = composedTag;
   }
 
-  if (filterParts.length > 0) {
-    args.push('-filter_complex', filterParts.join(';'));
-    args.push('-map', `[${lastVideoTag}]`);
+  // ── Multi-output: split composited video into one branch per destination ──────
+
+  if (allOutputs.length === 1) {
+    // Single output — no split needed, just map the composited video directly
+    if (filterParts.length > 0) {
+      // Check if we need to scale the output (e.g. TikTok vertical override)
+      const dest = allOutputs[0];
+      const destRes = dest.resolution;
+      if (destRes && destRes !== resolution) {
+        const [dw, dh] = destRes.split('x').map(Number);
+        filterParts.push(`[${lastVideoTag}]scale=${dw}:${dh}[outfinal0]`);
+        args.push('-filter_complex', filterParts.join(';'));
+        args.push('-map', '[outfinal0]');
+      } else {
+        args.push('-filter_complex', filterParts.join(';'));
+        args.push('-map', `[${lastVideoTag}]`);
+      }
+    } else {
+      args.push('-map', '0:v');
+    }
+
+    if (videoLayers.length > 0) args.push('-map', '0:a?');
+
+    const dest = allOutputs[0];
+    const vBitrate = `${dest.videoBitrate || 3000}k`;
+    const aBitrate = `${dest.audioBitrate || 128}k`;
+    args.push(
+      '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency',
+      '-b:v', vBitrate, '-maxrate', vBitrate, '-bufsize', `${(dest.videoBitrate || 3000) * 2}k`,
+      '-pix_fmt', 'yuv420p', '-g', String(fps * 2), '-r', String(fps),
+      '-c:a', 'aac', '-b:a', aBitrate, '-ar', '44100', '-ac', '2'
+    );
+    const destUrl = dest.key ? `${dest.url}/${dest.key}` : dest.url;
+    args.push('-f', dest.protocol === 'srt' ? 'mpegts' : 'flv', destUrl);
+
   } else {
-    args.push('-map', '0:v');
+    // Multiple outputs — use split filter to fan out to N encode chains
+    const splitTags = allOutputs.map((_, i) => `[split${i}v]`).join('');
+    if (filterParts.length > 0) {
+      filterParts.push(`[${lastVideoTag}]split=${allOutputs.length}${splitTags}`);
+    }
+
+    // For each output: optional scale, then encode
+    const finalTags = allOutputs.map((dest, i) => {
+      const destRes = dest.resolution;
+      if (destRes && destRes !== resolution) {
+        const [dw, dh] = destRes.split('x').map(Number);
+        if (filterParts.length > 0) {
+          filterParts.push(`[split${i}v]scale=${dw}:${dh}[outfinal${i}]`);
+        }
+        return `[outfinal${i}]`;
+      }
+      return filterParts.length > 0 ? `[split${i}v]` : null;
+    });
+
+    if (filterParts.length > 0) {
+      args.push('-filter_complex', filterParts.join(';'));
+    }
+
+    // Map + encode + output for each destination
+    for (let i = 0; i < allOutputs.length; i++) {
+      const dest = allOutputs[i];
+      const vBitrate = `${dest.videoBitrate || 3000}k`;
+      const aBitrate = `${dest.audioBitrate || 128}k`;
+
+      if (filterParts.length > 0 && finalTags[i]) {
+        args.push('-map', finalTags[i]);
+      } else {
+        args.push('-map', '0:v');
+      }
+      if (videoLayers.length > 0) args.push('-map', '0:a?');
+
+      args.push(
+        '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency',
+        '-b:v', vBitrate, '-maxrate', vBitrate, '-bufsize', `${(dest.videoBitrate || 3000) * 2}k`,
+        '-pix_fmt', 'yuv420p', '-g', String(fps * 2), '-r', String(fps),
+        '-c:a', 'aac', '-b:a', aBitrate, '-ar', '44100', '-ac', '2'
+      );
+      const destUrl = dest.key ? `${dest.url}/${dest.key}` : dest.url;
+      args.push('-f', dest.protocol === 'srt' ? 'mpegts' : 'flv', destUrl);
+    }
   }
 
-  if (videoLayers.length > 0) args.push('-map', '0:a?');
-
-  args.push(
-    '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency',
-    '-b:v', vBitrate, '-maxrate', vBitrate, '-bufsize', `${(output.videoBitrate || 3000) * 2}k`,
-    '-pix_fmt', 'yuv420p', '-g', String(fps * 2), '-r', String(fps),
-    '-c:a', 'aac', '-b:a', aBitrate, '-ar', '44100', '-ac', '2'
-  );
-
-  const outputUrl = output.key ? `${output.url}/${output.key}` : output.url;
-  args.push('-f', output.protocol === 'srt' ? 'mpegts' : 'flv', outputUrl);
-
-  console.log(`[FFmpeg] Compositor starting: ffmpeg ${args.join(' ')}`);
+  console.log(`[FFmpeg] Compositor starting (${allOutputs.length} output(s)): ffmpeg ${args.join(' ')}`);
   try {
     ffmpegProcess = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (err) {
@@ -365,7 +470,7 @@ function startCompositor() {
     broadcast({ type: 'stream_error', message: err.message });
   });
 
-  broadcast({ type: 'stream_started', config: { resolution, framerate, output } });
+  broadcast({ type: 'stream_started', config: { resolution, framerate, outputCount: allOutputs.length } });
   return null;
 }
 

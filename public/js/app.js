@@ -8,6 +8,7 @@
  *  - Server-side hardware RTMP/SRT ingest (composited by FFmpeg)
  *  - Browser sources: camera, screen capture, microphone (streamed to server)
  *  - Multi-scene switching (each scene = independent layout + output settings)
+ *  - Multi-destination simulcast (Twitch, YouTube, TikTok vertical, etc.)
  */
 
 'use strict';
@@ -17,12 +18,50 @@
 
   const editor = new SceneEditor();
   const sceneManager = new SceneManager(editor);
+  const outputManager = new OutputManager();
   const sources = new SourcesManager(editor);
   const overlays = new OverlaysManager(editor);
   const stream = new StreamController(editor);
 
-  // Expose sceneManager globally so stream.js can read activeSceneId
+  // Expose globally so stream.js and scenes.js can access them
   window._sceneManager = sceneManager;
+  window._outputManager = outputManager;
+
+  // Initial render of output list
+  outputManager._renderList();
+
+  // ── Output destinations ───────────────────────────────────────────────────
+
+  document.getElementById('btn-add-output').addEventListener('click', () => {
+    // Reset modal
+    document.getElementById('new-output-name').value = '';
+    document.getElementById('new-output-protocol').value = 'rtmp';
+    document.getElementById('new-output-url').value = '';
+    document.getElementById('new-output-key').value = '';
+    document.getElementById('new-output-vbitrate').value = '3000';
+    document.getElementById('new-output-abitrate').value = '128';
+    const resEl = document.getElementById('new-output-resolution');
+    if (resEl) resEl.value = '';
+    const hintEl = document.getElementById('output-preset-hint');
+    if (hintEl) hintEl.style.display = 'none';
+    openModal('modal-add-output');
+  });
+
+  // Platform preset buttons
+  document.querySelectorAll('.preset-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      outputManager.addFromPreset(btn.dataset.preset);
+    });
+  });
+
+  document.getElementById('btn-confirm-add-output').addEventListener('click', () => {
+    try {
+      outputManager.addFromModal();
+      closeModal('modal-add-output');
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
 
   // ── Toolbar / source buttons ──────────────────────────────────────────────
 
@@ -217,6 +256,11 @@
     if (msg.scenes) {
       sceneManager.loadFromServerState(msg);
       renderSceneList();
+      // Load outputs for the active scene
+      const activeScene = msg.scenes.find(s => s.id === msg.activeSceneId);
+      if (activeScene && activeScene.outputs) {
+        outputManager.loadOutputs(activeScene.outputs);
+      }
     }
     // Ingest panel
     if (msg.rtmpIngestPort) {

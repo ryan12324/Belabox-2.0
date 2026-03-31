@@ -874,3 +874,120 @@ html, body {
   margin: 0;
   border-bottom: 1px solid var(--border);
 }
+
+/* ── Output destinations ───────────────────────────────────────────────────── */
+.output-dest {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  margin: 6px 8px;
+  overflow: hidden;
+  background: var(--bg-panel);
+}
+
+.output-dest.disabled {
+  opacity: 0.5;
+}
+
+.dest-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px;
+  cursor: pointer;
+  background: var(--bg-hover);
+}
+
+.dest-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  min-width: 0;
+}
+
+.dest-toggle input[type=checkbox] {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.dest-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dest-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.dest-del {
+  flex-shrink: 0;
+  color: var(--text-dim) !important;
+}
+
+.dest-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 3px 10px 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dest-fields {
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--border);
+}
+
+/* ── Platform preset buttons ────────────────────────────────────────────────── */
+.platform-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.preset-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--bg-hover);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
+}
+
+.preset-btn:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.preset-icon {
+  font-size: 13px;
+}
+
+#output-preset-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+  padding: 6px 8px;
+  background: var(--bg-hover);
+  border-radius: 4px;
+  border-left: 3px solid var(--accent);
+}

@@ -102,21 +102,15 @@ class SceneManager {
   _applySceneSettings(scene) {
     const resEl = document.getElementById('output-resolution');
     const fpsEl = document.getElementById('output-fps');
-    const protoEl = document.getElementById('stream-protocol');
-    const urlEl = document.getElementById('stream-url');
-    const keyEl = document.getElementById('stream-key');
-    const vbrEl = document.getElementById('stream-vbitrate');
-    const abrEl = document.getElementById('stream-abitrate');
 
     if (resEl && scene.resolution) resEl.value = scene.resolution;
     if (fpsEl && scene.framerate) fpsEl.value = String(scene.framerate);
-    if (scene.output) {
-      if (protoEl) protoEl.value = scene.output.protocol || 'rtmp';
-      if (urlEl) urlEl.value = scene.output.url || '';
-      if (keyEl) keyEl.value = scene.output.key || '';
-      if (vbrEl) vbrEl.value = String(scene.output.videoBitrate || 3000);
-      if (abrEl) abrEl.value = String(scene.output.audioBitrate || 128);
+
+    // Reload output destinations for the new scene via OutputManager
+    if (window._outputManager && scene.outputs) {
+      window._outputManager.loadOutputs(scene.outputs);
     }
+
     if (resEl) {
       document.dispatchEvent(new CustomEvent('resolution-changed', { detail: resEl.value }));
     }

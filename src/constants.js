@@ -5,5 +5,6 @@ module.exports = {
   RTMP_PORT: process.env.RTMP_PORT || 1935,
   FFMPEG_GRACEFUL_SHUTDOWN_MS: 2000,
   FFMPEG_VERSION_CHECK_TIMEOUT_MS: 3000,
+  /** Must match BROWSER_SOURCE_CHUNK_MS in public/js/sources.js */
   BROWSER_SOURCE_CHUNK_MS: 250,
 };

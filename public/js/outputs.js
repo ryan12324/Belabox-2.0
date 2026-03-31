@@ -323,9 +323,10 @@ class OutputManager {
 
     // Show/hide the preview controls depending on whether there are vertical outputs
     const hidden = verticalOutputs.length === 0;
-    ['preview-output-sep', 'preview-output-label', 'preview-output-select'].forEach(id => {
+    const displayValues = { 'preview-output-sep': 'inline', 'preview-output-label': 'inline', 'preview-output-select': 'inline-block' };
+    Object.entries(displayValues).forEach(([id, displayVal]) => {
       const el = document.getElementById(id);
-      if (el) el.style.display = hidden ? 'none' : '';
+      if (el) el.style.display = hidden ? 'none' : displayVal;
     });
   }
 }

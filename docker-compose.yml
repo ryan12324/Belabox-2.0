@@ -1,0 +1,20 @@
+services:
+  belabox:
+    build:
+      context: .
+    ports:
+      - "3000:3000"
+      - "1935:1935"
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - RTMP_PORT=1935
+    volumes:
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/status"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3

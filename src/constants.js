@@ -1,0 +1,9 @@
+'use strict';
+
+module.exports = {
+  HTTP_PORT: process.env.PORT || 3000,
+  RTMP_PORT: process.env.RTMP_PORT || 1935,
+  FFMPEG_GRACEFUL_SHUTDOWN_MS: 2000,
+  FFMPEG_VERSION_CHECK_TIMEOUT_MS: 3000,
+  BROWSER_SOURCE_CHUNK_MS: 250,
+};

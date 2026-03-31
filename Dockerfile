@@ -11,8 +11,9 @@ WORKDIR /app
 RUN apk add --no-cache ffmpeg
 
 COPY --from=deps /app/node_modules ./node_modules
-COPY server.js ./
-COPY public/ ./public/
+COPY . .
+
+RUN chown -R node:node /app
 
 ENV NODE_ENV=production
 

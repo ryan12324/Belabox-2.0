@@ -77,6 +77,7 @@
   document.getElementById('btn-add-srt').addEventListener('click', () => openModal('modal-add-srt'));
   document.getElementById('btn-add-text').addEventListener('click', () => overlays.addText());
   document.getElementById('btn-add-image').addEventListener('click', () => openModal('modal-add-image'));
+  document.getElementById('btn-add-browser-url').addEventListener('click', () => openModal('modal-add-browser-url'));
 
   // Source picker modal
   document.querySelectorAll('.source-type-btn').forEach(btn => {
@@ -92,6 +93,7 @@
         case 'srt':        openModal('modal-add-srt'); break;
         case 'text':       overlays.addText();      break;
         case 'image':      openModal('modal-add-image'); break;
+        case 'browser_url': openModal('modal-add-browser-url'); break;
       }
     });
   });
@@ -165,6 +167,77 @@
       document.getElementById('srt-name-input').value = '';
       document.getElementById('srt-url-input').value = '';
       closeModal('modal-add-srt');
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+
+  // ── Browser URL modal ─────────────────────────────────────────────────────
+
+  document.getElementById('btn-confirm-add-browser-url').addEventListener('click', () => {
+    const name = document.getElementById('browser-url-name-input').value.trim() || 'Browser Source';
+    const url  = document.getElementById('browser-url-url-input').value.trim();
+    const wVal = parseInt(document.getElementById('browser-url-width-input').value, 10);
+    const hVal = parseInt(document.getElementById('browser-url-height-input').value, 10);
+    if (!url) { showToast('URL is required', 'error'); return; }
+    try {
+      sources.addBrowserUrl(name, url, {
+        width:  !isNaN(wVal) && wVal > 0 ? wVal : undefined,
+        height: !isNaN(hVal) && hVal > 0 ? hVal : undefined,
+      });
+      document.getElementById('browser-url-name-input').value = '';
+      document.getElementById('browser-url-url-input').value = '';
+      document.getElementById('browser-url-width-input').value = '';
+      document.getElementById('browser-url-height-input').value = '';
+      closeModal('modal-add-browser-url');
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+
+  // ── Settings modal ────────────────────────────────────────────────────────
+
+  document.getElementById('btn-settings').addEventListener('click', async () => {
+    try {
+      const res = await fetch('/api/settings');
+      if (res.ok) {
+        const s = await res.json();
+        document.getElementById('settings-auth-enabled').checked = !!s.enabled;
+        document.getElementById('settings-username').value = s.username || 'admin';
+        document.getElementById('settings-password').value = '';
+        document.getElementById('settings-password-confirm').value = '';
+        document.getElementById('settings-current-password').value = '';
+        const showCurrentPw = s.enabled && s.hasPassword;
+        document.getElementById('settings-current-pw-label').style.display = showCurrentPw ? 'block' : 'none';
+        document.getElementById('settings-current-password').style.display = showCurrentPw ? 'block' : 'none';
+      }
+    } catch (_) {}
+    openModal('modal-settings');
+  });
+
+  document.getElementById('btn-confirm-settings').addEventListener('click', async () => {
+    const enabled  = document.getElementById('settings-auth-enabled').checked;
+    const username = document.getElementById('settings-username').value.trim();
+    const password = document.getElementById('settings-password').value;
+    const confirm  = document.getElementById('settings-password-confirm').value;
+    const currentPassword = document.getElementById('settings-current-password').value;
+
+    if (password && password !== confirm) {
+      showToast('Passwords do not match', 'error');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled, username, password, currentPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) { showToast(data.error || 'Failed to save settings', 'error'); return; }
+      showToast('Settings saved', 'success');
+      closeModal('modal-settings');
+      if (enabled) showToast('Authentication is now enabled', 'success');
     } catch (err) {
       showToast(err.message, 'error');
     }
@@ -504,6 +577,17 @@
       `;
     }
 
+    if (layer.type === 'browser_url') {
+      html += `
+        <div class="prop-group">
+          <span class="prop-group-title">Browser Source</span>
+          <label class="prop-label">URL</label>
+          <input class="prop-input" id="prop-browser-url" type="url" value="${esc(layer.url || '')}" placeholder="https://…" />
+          <p class="modal-hint-sm" style="margin-top:4px">The iframe updates when you change the URL. Position and size control where the overlay appears in the scene.</p>
+        </div>
+      `;
+    }
+
     if (layer.type === 'text') {
       const s = layer.textStyle || {};
       html += `
@@ -590,6 +674,26 @@
       }
     }
 
+    if (layer.type === 'browser_url') {
+      const urlEl = document.getElementById('prop-browser-url');
+      if (urlEl) {
+        urlEl.addEventListener('change', () => {
+          const newUrl = urlEl.value.trim();
+          layer.url = newUrl;
+          // Update iframe src if it exists — validate scheme first
+          const iframe = sources._browserUrlIframes && sources._browserUrlIframes.get(layer.id);
+          if (iframe) {
+            try {
+              const parsed = new URL(newUrl);
+              iframe.src = (parsed.protocol === 'http:' || parsed.protocol === 'https:') ? parsed.href : 'about:blank';
+            } catch (_) {
+              iframe.src = 'about:blank';
+            }
+          }
+        });
+      }
+    }
+
     document.getElementById('prop-delete').addEventListener('click', () => removeLayer(layer));
   }
 
@@ -597,7 +701,8 @@
 
   function removeLayer(layer) {
     if (layer.type === 'rtmp' || layer.type === 'srt' ||
-        layer.type === 'camera' || layer.type === 'screen' || layer.type === 'microphone') {
+        layer.type === 'camera' || layer.type === 'screen' || layer.type === 'microphone' ||
+        layer.type === 'browser_url') {
       sources.removeSource(layer.id);
     } else {
       overlays.removeOverlay(layer.id);
@@ -622,7 +727,7 @@
   }
 
   function typeIcon(type) {
-    return { camera: '📷', screen: '🖥', microphone: '🎙', rtmp: '📡', srt: '🔗', text: '📝', image: '🖼' }[type] || '▪';
+    return { camera: '📷', screen: '🖥', microphone: '🎙', rtmp: '📡', srt: '🔗', text: '📝', image: '🖼', browser_url: '🌐' }[type] || '▪';
   }
 
   function esc(str) {

@@ -174,6 +174,10 @@ class SceneEditor {
         }
         break;
 
+      case 'browser_url':
+        this._drawBrowserUrlPlaceholder(ctx, layer);
+        break;
+
       case 'microphone':
         this._drawMicrophonePlaceholder(ctx, layer);
         break;
@@ -248,6 +252,45 @@ class SceneEditor {
     ctx.font = `bold ${Math.min(12, height / 8)}px sans-serif`;
     ctx.fillStyle = '#666';
     ctx.fillText(layer.name || 'Microphone', x + width / 2, y + height / 2 + 16);
+  }
+
+  /** Placeholder for a browser URL source on the compositor canvas */
+  _drawBrowserUrlPlaceholder(ctx, layer) {
+    const { x, y, width, height } = layer;
+    ctx.fillStyle = '#0a0d14';
+    ctx.fillRect(x, y, width, height);
+    ctx.strokeStyle = '#2c5380';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 3]);
+    ctx.strokeRect(x + 1, y + 1, width - 2, height - 2);
+    ctx.setLineDash([]);
+
+    const cx = x + width / 2;
+    const cy = y + height / 2;
+    const iconSize = Math.min(32, height / 5);
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `${iconSize}px sans-serif`;
+    ctx.fillStyle = '#4a90c4';
+    ctx.fillText('🌐', cx, cy - iconSize * 0.6);
+
+    ctx.font = `bold ${Math.min(14, height / 10)}px sans-serif`;
+    ctx.fillStyle = '#60a8f0';
+    ctx.fillText(layer.name || 'Browser Source', cx, cy + iconSize * 0.6);
+
+    // Show truncated URL beneath the name
+    const url = layer.url || '';
+    if (url) {
+      let displayUrl = url;
+      ctx.font = `${Math.min(10, height / 16)}px monospace`;
+      ctx.fillStyle = '#3a6080';
+      const maxW = width - 20;
+      while (ctx.measureText(displayUrl).width > maxW && displayUrl.length > 8) {
+        displayUrl = displayUrl.slice(0, -4) + '\u2026';
+      }
+      ctx.fillText(displayUrl, cx, cy + iconSize * 1.6);
+    }
   }
 
   /**

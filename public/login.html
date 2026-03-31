@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Belabox 2.0 — Sign In</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #1e1e1e;
+      --bg-panel: #252526;
+      --bg-input: #3c3c3c;
+      --border: #404040;
+      --border-light: #555;
+      --text: #cccccc;
+      --text-bright: #e8e8e8;
+      --text-dim: #888;
+      --accent: #0078d4;
+      --accent-hover: #106ebe;
+      --radius: 4px;
+      --radius-lg: 8px;
+    }
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg);
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      font-size: 14px;
+      color: var(--text);
+    }
+    .login-card {
+      background: var(--bg-panel);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-lg);
+      padding: 40px 36px 36px;
+      width: 360px;
+      max-width: 95vw;
+      box-shadow: 0 16px 48px rgba(0,0,0,0.6);
+    }
+    .login-logo {
+      text-align: center;
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--text-bright);
+      margin-bottom: 8px;
+    }
+    .login-logo span { color: var(--accent); }
+    .login-subtitle {
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 13px;
+      margin-bottom: 28px;
+    }
+    label {
+      display: block;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      color: var(--text-dim);
+      margin-bottom: 4px;
+      margin-top: 14px;
+    }
+    label:first-of-type { margin-top: 0; }
+    input[type="text"],
+    input[type="password"] {
+      width: 100%;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      color: var(--text-bright);
+      font-size: 14px;
+      padding: 9px 12px;
+      border-radius: var(--radius);
+      font-family: inherit;
+      transition: border-color 0.15s;
+    }
+    input:focus { outline: none; border-color: var(--accent); }
+    .btn-login {
+      width: 100%;
+      margin-top: 24px;
+      padding: 10px;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius);
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-login:hover { background: var(--accent-hover); }
+    .error-msg {
+      margin-top: 14px;
+      color: #e74c3c;
+      font-size: 13px;
+      text-align: center;
+      min-height: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-card">
+    <div class="login-logo">🎬 Belabox <span>2.0</span></div>
+    <div class="login-subtitle">Sign in to continue</div>
+    <form id="login-form" autocomplete="on">
+      <label for="username">Username</label>
+      <input id="username" name="username" type="text" autocomplete="username" placeholder="admin" required />
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" placeholder="••••••••" required />
+      <button type="submit" class="btn-login">Sign In</button>
+    </form>
+    <div class="error-msg" id="error-msg"></div>
+  </div>
+
+  <script>
+    document.getElementById('login-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const username = document.getElementById('username').value;
+      const password = document.getElementById('password').value;
+      const errEl = document.getElementById('error-msg');
+      errEl.textContent = '';
+
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+        });
+        if (res.ok) {
+          window.location.href = '/';
+        } else {
+          const data = await res.json().catch(() => ({}));
+          errEl.textContent = data.error || 'Login failed. Please try again.';
+        }
+      } catch {
+        errEl.textContent = 'Network error. Please try again.';
+      }
+    });
+  </script>
+</body>
+</html>

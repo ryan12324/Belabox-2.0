@@ -4,9 +4,13 @@ const { Router } = require('express');
 const inputsRouter = require('./inputs');
 const scenesRouter = require('./scenes');
 const streamRouter = require('./stream');
+const authRouter = require('./auth');
+const settingsRouter = require('./settings');
 
 const router = Router();
 
+router.use('/auth', authRouter);
+router.use('/settings', settingsRouter);
 router.use('/inputs', inputsRouter);
 router.use('/scenes', scenesRouter);
 
